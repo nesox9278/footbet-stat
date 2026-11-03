@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FOOTBET Stats</title>
+<meta name="description" content="Probabilités des matchs calculées par l'agent statistique FOOTBET, mises à jour toutes les 15 minutes.">
+<style>
+:root{color-scheme:dark;--bg:#09090A;--s1:#141416;--s2:#1C1C1F;--s3:#26262A;--line:#2A2A2F;--ink:#F5F5F6;--ink2:#A7A7AF;--ink3:#6F6F77;--red:#E30613;--red2:#FF2B37;--redS:rgba(227,6,19,.16);--pos:#2FD07A;--posS:rgba(47,208,122,.14);--warn:#F7B32B;--warnS:rgba(247,179,43,.13);--d:"Arial Narrow","Roboto Condensed",system-ui,sans-serif;--b:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 var(--b)}
+a{color:var(--red2)}.num{font-variant-numeric:tabular-nums}
+header{position:sticky;top:0;z-index:5;background:rgba(9,9,10,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.in{max-width:1180px;margin:0 auto;padding:0 16px}
+.top{display:flex;align-items:center;gap:16px;height:58px}
+.brand{font:italic 800 28px/1 var(--d);letter-spacing:.01em;display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--ink)}
+.brand i{width:10px;height:22px;background:var(--red);transform:skewX(-14deg)}.brand span{color:var(--red)}.brand small{font:600 13px var(--b);color:var(--ink3);font-style:normal;letter-spacing:.08em;text-transform:uppercase}
+.st{margin-left:auto;font-size:13px;color:var(--ink2);display:flex;align-items:center;gap:8px;text-align:right}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--pos);box-shadow:0 0 0 3px var(--posS);flex:0 0 auto}.dot.old{background:var(--warn);box-shadow:0 0 0 3px var(--warnS)}
+main{max-width:1180px;margin:0 auto;padding:20px 16px 48px;display:grid;gap:16px}
+h1{font:800 clamp(30px,5vw,44px)/1 var(--d);text-transform:uppercase;margin:0}
+h2{font:700 20px/1.1 var(--d);text-transform:uppercase;letter-spacing:.04em;margin:0 0 12px;display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+h2 small{font:500 12.5px var(--b);text-transform:none;letter-spacing:0;color:var(--ink3)}
+.lead{margin:6px 0 0;color:var(--ink2);max-width:70ch}
+.card{background:var(--s1);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+.chips{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none}.chips::-webkit-scrollbar{display:none}
+.chip{flex:0 0 auto;border:1px solid var(--line);background:transparent;color:var(--ink2);border-radius:999px;padding:6px 12px;font:600 13px var(--b);cursor:pointer;white-space:nowrap}
+.chip[aria-pressed=true]{background:var(--red);border-color:var(--red);color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr));gap:12px;align-items:start}
+.m{background:var(--s1);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;min-width:0}
+.m.hot{border-color:rgba(227,6,19,.5)}
+.mh{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--ink3);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.teams{display:grid;gap:6px}
+.t{display:flex;justify-content:space-between;align-items:center;gap:8px;min-width:0}
+.t b{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t small{color:var(--ink3);font-weight:600;font-size:12px;flex:0 0 auto}
+.form{display:flex;gap:3px;flex:0 0 auto}.form i{font-style:normal;width:19px;height:19px;border-radius:4px;display:grid;place-items:center;font-size:10.5px;font-weight:800}
+.form .V{background:var(--posS);color:var(--pos)}.form .N{background:var(--s3);color:var(--ink2)}.form .D{background:var(--redS);color:#FFB3B8}
+.bar{display:flex;height:30px;border-radius:8px;overflow:hidden;font-size:12px;font-weight:700}
+.bar div{display:grid;place-items:center;min-width:0;white-space:nowrap;overflow:hidden}
+.b1{background:var(--red)}.bN{background:var(--s3);color:var(--ink2)}.b2{background:#5A5A63}
+.pk{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--s2);border-radius:8px;padding:8px 10px}
+.pk b{font-weight:800}.pk span{font-variant-numeric:tabular-nums;font-weight:800;color:var(--red2);white-space:nowrap}
+.tag{display:inline-block;border-radius:999px;padding:2px 8px;font-size:11.5px;font-weight:700}
+.tag.forte{background:var(--posS);color:var(--pos)}.tag.moyenne{background:var(--warnS);color:var(--warn)}.tag.faible{background:var(--s3);color:var(--ink2)}
+.kv{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:0}
+.kv div{background:var(--s2);border-radius:8px;padding:6px 8px}.kv dt{font-size:10.5px;color:var(--ink3);font-weight:700;text-transform:uppercase;letter-spacing:.06em}.kv dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums}
+details summary{cursor:pointer;font-size:13px;color:var(--ink2);font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:13.5px}th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink3);text-align:left;padding:6px 6px;border-bottom:1px solid var(--line)}td{padding:6px;border-bottom:1px solid var(--line)}.r{text-align:right;font-variant-numeric:tabular-nums}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:0}
+.kpi{background:var(--s1);border:1px solid var(--line);border-radius:12px;padding:12px 14px}.kpi dt{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3)}.kpi dd{margin:0;font:800 30px/1.1 var(--d);font-variant-numeric:tabular-nums}.kpi small{color:var(--ink3);font-size:12.5px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:16px;align-items:start}
+.note{font-size:13px;color:var(--ink3);margin:0}
+.empty{border:1px dashed var(--line);border-radius:12px;padding:28px 16px;text-align:center;color:var(--ink2)}
+.alert{background:var(--warnS);color:var(--warn);border-radius:10px;padding:10px 12px;font-size:14px;margin:0}
+.ok{color:var(--pos)}.ko{color:#FFB3B8}
+@media (max-width:520px){.kv{grid-template-columns:repeat(2,minmax(0,1fr))}.st span.long{display:none}}
+</style>
+</head>
+<body>
+<header><div class="in top">
+  <a class="brand" href="./"><i></i>FOOT<span>BET</span> <small>Stats</small></a>
+  <div class="st"><span class="dot" id="dot"></span><span id="st">Chargement…</span></div>
+</div></header>
+<main>
+  <div><h1>Probabilités des matchs</h1><p class="lead">Calculées par l'agent FOOTBET à partir des résultats récents : modèle de Poisson, classement Elo et ClubElo, pondérés selon leurs erreurs passées. Mise à jour automatique toutes les 15 minutes, cette page se recharge toute seule.</p></div>
+  <p class="alert" id="err" hidden></p>
+  <dl class="kpis" id="kpis"></dl>
+  <div class="card"><h2>Les plus probables <small>prochaines 36 heures</small></h2><div class="grid" id="top"></div></div>
+  <div class="chips" id="days"></div>
+  <div class="chips" id="comps"></div>
+  <div class="grid" id="list"><div class="empty">Chargement des statistiques…</div></div>
+  <div class="two">
+    <div class="card"><h2>Fiabilité du modèle <small id="qn"></small></h2><div id="calib"></div></div>
+    <div class="card"><h2>Derniers pronostics réglés</h2><div id="recent"></div></div>
+  </div>
+  <p class="note">Ces probabilités sont des estimations statistiques, jamais des certitudes. Compare-les aux cotes avant de parier et mise peu. Paris interdits aux mineurs. Si le jeu prend trop de place : Joueurs Info Service, 09 74 75 13 13.</p>
+</main>
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = (x, d = 0) => Number.isFinite(x) ? (x * 100).toFixed(d).replace(".", ",") + " %" : "—";
+const fmt = (x, d = 2) => Number.isFinite(x) ? x.toFixed(d).replace(".", ",") : "—";
+const st = { day: null, comp: "" }; let D = null;
+try { Object.assign(st, JSON.parse(localStorage.getItem("fbs") || "{}")); } catch (e) {}
+const save = () => { try { localStorage.setItem("fbs", JSON.stringify(st)); } catch (e) {} };
+const loc = iso => new Date(iso);
+const dayKey = iso => { const d = loc(iso); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); };
+const hm = iso => loc(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const dayLab = k => { const t = dayKey(new Date().toISOString()), tm = dayKey(new Date(Date.now() + 864e5).toISOString()); if (k === t) return "Aujourd'hui"; if (k === tm) return "Demain"; return new Date(k + "T12:00:00").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }); };
+const ago = iso => { const m = Math.round((Date.now() - Date.parse(iso)) / 6e4); return m < 2 ? "à l'instant" : m < 60 ? `il y a ${m} min` : `il y a ${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`; };
+const form = s => `<span class="form">${String(s || "").split(" ").filter(x => /^[VND]$/.test(x)).map(x => `<i class="${x}">${x}</i>`).join("")}</span>`;
+const CN = { poisson: "Poisson", elo: "Elo FOOTBET", clubelo: "ClubElo" };
+
+function card(m, isTop) {
+  const comp = D.competitions[m.c] || m.c, p = m.p;
+  const seg = (cl, v, lab) => `<div class="${cl}" style="width:${Math.max(v * 100, 7)}%" title="${lab} ${pct(v)}">${v >= .12 ? lab + " " + pct(v) : pct(v)}</div>`;
+  return `<article class="m${isTop ? " hot" : ""}">
+    <div class="mh"><span>${esc(comp)}${m.md ? " · J" + m.md : ""}</span><span>${esc(dayLab(dayKey(m.utc)))} · ${hm(m.utc)}</span></div>
+    <div class="teams">
+      <div class="t"><b>${esc(m.h)}</b><span style="display:flex;gap:8px;align-items:center">${m.pos[0] ? `<small>${m.pos[0]}e</small>` : ""}${form(m.form[0])}</span></div>
+      <div class="t"><b>${esc(m.a)}</b><span style="display:flex;gap:8px;align-items:center">${m.pos[1] ? `<small>${m.pos[1]}e</small>` : ""}${form(m.form[1])}</span></div>
+    </div>
+    <div class="bar">${seg("b1", p[0], "1")}${seg("bN", p[1], "N")}${seg("b2", p[2], "2")}</div>
+    <div class="pk"><div><b>${esc(m.pick.label)}</b> <span class="tag ${m.conf}">${m.conf}</span></div><span>${pct(m.pick.prob)}</span></div>
+    <dl class="kv"><div><dt>Buts attendus</dt><dd>${fmt(m.xg[0], 1)} – ${fmt(m.xg[1], 1)}</dd></div><div><dt>Score probable</dt><dd>${esc(m.score)}</dd></div><div><dt>+ 2,5 buts</dt><dd>${pct(m.over25)}</dd></div><div><dt>2 marquent</dt><dd>${pct(m.btts)}</dd></div></dl>
+    <details><summary>Détail des modèles${m.agree ? " · tous d'accord" : " · modèles partagés"}</summary>
+      <table><thead><tr><th>Modèle</th><th class="r">1</th><th class="r">N</th><th class="r">2</th></tr></thead><tbody>
+      ${Object.entries(m.comp).map(([k, v]) => `<tr><td>${CN[k] || k} <span class="note">(poids ${pct(D.weights[k] || 0)})</span></td><td class="r">${pct(v[0])}</td><td class="r">${pct(v[1])}</td><td class="r">${pct(v[2])}</td></tr>`).join("")}
+      <tr><td><b>Mélange FOOTBET</b></td><td class="r"><b>${pct(p[0])}</b></td><td class="r"><b>${pct(p[1])}</b></td><td class="r"><b>${pct(p[2])}</b></td></tr></tbody></table>
+      <p class="note" style="margin-top:6px">Elo : ${m.elo[0]} contre ${m.elo[1]}.</p>
+    </details>
+  </article>`;
+}
+
+function render() {
+  if (!D) return;
+  const upd = D.updated, old = Date.now() - Date.parse(upd) > 45 * 6e4;
+  $("#dot").className = "dot" + (old ? " old" : "");
+  const next = new Date(Date.parse(upd) + (D.everyMin || 15) * 6e4);
+  $("#st").innerHTML = `Mis à jour ${ago(upd)}<span class="long"> · prochaine vers ${next.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>`;
+  const e = $("#err"); e.hidden = !(D.errors && D.errors.length) && !old; e.textContent = old ? "L'agent n'a pas publié depuis plus de 45 minutes : vérifie l'onglet Actions du dépôt GitHub." : "Données partielles à ce passage : " + D.errors.join(" · ");
+  const ms = D.matches.filter(m => Date.parse(m.utc) > Date.now());
+  const Q = D.quality || {};
+  $("#kpis").innerHTML = [["Matchs suivis", ms.length, "sur les 8 prochains jours"], ["Réussite du favori", pct(Q.hitRate), Q.settled ? `${Q.settled} matchs réglés` : "en cours d'apprentissage"], ["Réussite des pronostics", pct(Q.pickHitRate), Q.picks ? `${Q.picks} pronostics` : "—"], ["Score de Brier", fmt(Q.brier, 3), "plus bas = mieux (0,667 = au hasard)"]].map(([a, b, c]) => `<div class="kpi"><dt>${a}</dt><dd>${b}</dd><small>${c}</small></div>`).join("");
+  const top = D.top.map(id => ms.find(m => m.id === id)).filter(Boolean);
+  $("#top").innerHTML = top.length ? top.map(m => card(m, true)).join("") : `<div class="empty">Aucun match dans les 36 prochaines heures.</div>`;
+  const days = [...new Set(ms.map(m => dayKey(m.utc)))].sort();
+  if (!days.includes(st.day)) st.day = days[0] || null;
+  $("#days").innerHTML = days.map(d => `<button class="chip" data-day="${d}" aria-pressed="${d === st.day}">${esc(dayLab(d))} · ${ms.filter(m => dayKey(m.utc) === d).length}</button>`).join("");
+  const inDay = ms.filter(m => dayKey(m.utc) === st.day), comps = [...new Set(inDay.map(m => m.c))];
+  if (st.comp && !comps.includes(st.comp)) st.comp = "";
+  $("#comps").innerHTML = `<button class="chip" data-comp="" aria-pressed="${!st.comp}">Toutes</button>` + comps.map(c => `<button class="chip" data-comp="${c}" aria-pressed="${st.comp === c}">${esc(D.competitions[c] || c)}</button>`).join("");
+  const list = inDay.filter(m => !st.comp || m.c === st.comp);
+  $("#list").innerHTML = list.length ? list.map(m => card(m)).join("") : `<div class="empty">Aucun match ce jour-là.</div>`;
+  const C = Q.components || {};
+  $("#qn").textContent = Q.settled ? `${Q.settled} matchs réglés` : "";
+  $("#calib").innerHTML = `<table><thead><tr><th>Modèle</th><th class="r">Poids</th><th class="r">Log-loss</th><th class="r">Matchs</th></tr></thead><tbody>${["poisson", "elo", "clubelo"].map(k => `<tr><td>${CN[k]}</td><td class="r">${pct(D.weights[k] || 0)}</td><td class="r">${fmt((C[k] || {}).logloss, 3)}</td><td class="r">${(C[k] || {}).n || 0}</td></tr>`).join("")}</tbody></table>
+    ${(Q.calibration || []).length ? `<table style="margin-top:12px"><thead><tr><th>Favori annoncé à</th><th class="r">Annoncé</th><th class="r">Réel</th><th class="r">Matchs</th></tr></thead><tbody>${Q.calibration.map(b => `<tr><td>${b.bin}</td><td class="r">${pct(b.pred)}</td><td class="r">${pct(b.real)}</td><td class="r">${b.n}</td></tr>`).join("")}</tbody></table>` : ""}
+    <p class="note" style="margin-top:10px">Log-loss : plus bas = meilleur. Le poids de chaque modèle s'ajuste tout seul à partir de 30 matchs réglés. Un modèle bien calibré a des colonnes « Annoncé » et « Réel » proches.</p>`;
+  const R = Q.recent || [];
+  $("#recent").innerHTML = R.length ? `<table><tbody>${R.map(r => `<tr><td>${esc(r.match)}<div class="note">${esc(r.pick || "")}</div></td><td class="r">${esc(r.score || "")}</td><td class="r ${r.ok ? "ok" : "ko"}">${r.ok == null ? "" : r.ok ? "✓" : "✗"}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">Les premiers résultats apparaîtront après les prochains matchs.</div>`;
+}
+
+document.addEventListener("click", e => {
+  const d = e.target.closest("[data-day]"); if (d) { st.day = d.dataset.day; st.comp = ""; save(); render(); return; }
+  const c = e.target.closest("[data-comp]"); if (c) { st.comp = c.dataset.comp; save(); render(); }
+});
+
+async function load() {
+  try {
+    const r = await fetch("data/stats.json?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    D = await r.json(); render();
+  } catch (e) {
+    if (!D) $("#list").innerHTML = `<div class="empty">Statistiques pas encore disponibles. L'agent les publie à son premier passage (onglet Actions du dépôt).</div>`;
+  }
+}
+load();
+setInterval(load, 10 * 60 * 1000);
+setInterval(render, 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+})();
+</script>
+</body>
+</html>
