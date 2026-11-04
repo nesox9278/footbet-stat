@@ -1,0 +1,48 @@
+name: Sonde ESPN (temporaire)
+on:
+  push:
+    branches: [claude/confident-heisenberg-wmovvo]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          cat > p.py <<'PY'
+          import json, urllib.request
+          def g(u):
+              r = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "footbet-agent/1.0"}), timeout=20)
+              return json.loads(r.read())
+          B = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+          for lg in ("uefa.europa", "uefa.europa.conf"):
+              d = g(B + lg + "/scoreboard?dates=20260701-20261115&limit=1000")
+              ev = d.get("events", [])
+              print(lg, len(ev), "events")
+              for e in ev[:1] + ev[-3:]:
+                  c = e["competitions"][0]
+                  print(" ", e["id"], e["date"], e["status"]["type"].get("state"), e["status"]["type"].get("completed"), [(t["homeAway"], t["team"].get("displayName"), t["team"].get("shortDisplayName"), t["team"].get("id"), t.get("score")) for t in c["competitors"]])
+              past = [e for e in ev if e["status"]["type"].get("completed")]
+              fut = [e for e in ev if e["status"]["type"].get("state") == "pre"]
+              tid = None
+              for e in (past[-1:] + fut[:1]):
+                  s = g(B + lg + "/summary?event=" + e["id"])
+                  print("  SUMMARY", e["id"], sorted(s.keys()))
+                  for k in ("injuries", "rosters"):
+                      v = s.get(k)
+                      print("   ", k, json.dumps(v)[:1500] if v else v)
+                  tid = e["competitions"][0]["competitors"][0]["team"]["id"]
+              try:
+                  r = g(B + lg + "/teams/" + tid + "/roster")
+                  a = r.get("athletes", [])
+                  print("  ROSTER keys", sorted(r.keys()), len(a))
+                  inj = [x for x in a if x.get("injuries")]
+                  print("  roster injured", len(inj), json.dumps(inj[:2])[:1200])
+                  print("  athlete keys", sorted(a[0].keys()) if a else None)
+              except Exception as ex:
+                  print("  roster err", ex)
+          d = g(B + "eng.1/scoreboard?dates=20261107-20261109")
+          for e in d.get("events", [])[:1]:
+              s = g(B + "eng.1/summary?event=" + e["id"])
+              print("PL SUMMARY", sorted(s.keys()), json.dumps(s.get("injuries"))[:1500])
+          PY
+          python3 p.py
