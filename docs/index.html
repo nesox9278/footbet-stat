@@ -456,7 +456,8 @@ const confChip = c => `<span class="chip ${c === "forte" ? "pos" : c === "moyenn
 const formPills = s => { const l = String(s || "").split(/\s+/).filter(x => /^[VND]$/.test(x)); return l.length ? `<div class="form">${l.map(x => `<i class="${x}">${x}</i>`).join("")}</div>` : `<span class="dim">—</span>`; };
 
 /* ===== Cotes Betclic ===== */
-const selOdd = (m, sel) => { const o = m.odds; if (!o || !o.r) return null; const r = o.r; return sel === "1" ? r[0] : sel === "N" ? r[1] : sel === "2" ? r[2] : sel === "1N" ? 1 / (1 / r[0] + 1 / r[1]) : sel === "12" ? 1 / (1 / r[0] + 1 / r[2]) : sel === "N2" ? 1 / (1 / r[1] + 1 / r[2]) : null; };
+const selOdd = (m, sel) => { const o = m.odds; if (!o) return null; const g = /^ou([\d.]+)-([01])$/.exec(sel || ""); if (g) { const l = o.ou && o.ou[g[1]]; return l ? l[+g[2]] : null; } if (!o.r) return null; const r = o.r; return sel === "1" ? r[0] : sel === "N" ? r[1] : sel === "2" ? r[2] : sel === "1N" ? 1 / (1 / r[0] + 1 / r[1]) : sel === "12" ? 1 / (1 / r[0] + 1 / r[2]) : sel === "N2" ? 1 / (1 / r[1] + 1 / r[2]) : null; };
+const selEst = sel => ["1N", "12", "N2"].includes(sel);
 const value = (p, o) => Number.isFinite(p) && o > 1 ? p * o - 1 : null;
 const spct = v => Number.isFinite(v) ? (v > 0 ? "+" : v < 0 ? "−" : "") + pct(Math.abs(v), 1) : "—";
 const oddsAge = () => D && D.odds && D.odds.at ? `Cotes Betclic relevées ${ago(D.odds.at)}` : "Cotes Betclic pas encore relevées";
@@ -542,10 +543,10 @@ function renderMatch() {
   const pk = m.pick, dc = [m.p[0] + m.p[1], m.p[0] + m.p[2], m.p[1] + m.p[2]], po = selOdd(m, pk.sel), pv = value(pk.prob, po), O = m.odds || {};
   const ob = (lab, p, o, est, hi) => { const v = value(p, o); return `<div class="ob${v > 0 ? " val" : ""}" aria-pressed="${!!hi}"><span>${lab}</span><b>${o ? fmt(o) + (est ? " ≈" : "") : pct(p)}</b><small>${o ? pct(p) + " · " + `<span class="${v > 0 ? "pos" : "dim"}">${spct(v)}</span>` : fair(p)}</small></div>`; };
   const imax = m.p.indexOf(Math.max(...m.p));
-  const ouLines = Object.keys(O.ou || {}).sort();
-  const side = O.r ? `<div class="card"><h2>Cotes Betclic <small>${esc(oddsAge().replace("Cotes Betclic relevées ", ""))}</small></h2><div style="display:grid;gap:14px">
-        <div class="mk"><div class="mk-h"><b>Résultat</b></div><div class="mk-g">${["1", "N", "2"].map((l, i) => ob(l, m.p[i], O.r[i], false, i === imax)).join("")}</div></div>
-        <div class="mk"><div class="mk-h"><b>Double chance</b><span>estimée</span></div><div class="mk-g">${["1N", "12", "N2"].map((l, i) => ob(l, dc[i], selOdd(m, l), true, false)).join("")}</div></div>
+  const ouLines = Object.keys(O.ou || {}).filter(L => Number.isFinite(m.overs[L])).sort((a, b) => a - b);
+  const side = O.r || ouLines.length ? `<div class="card"><h2>Cotes Betclic <small>${esc(oddsAge().replace("Cotes Betclic relevées ", ""))}</small></h2><div style="display:grid;gap:14px">
+        <div class="mk"><div class="mk-h"><b>Résultat</b></div><div class="mk-g">${["1", "N", "2"].map((l, i) => ob(l, m.p[i], O.r ? O.r[i] : null, false, i === imax)).join("")}</div></div>
+        <div class="mk"><div class="mk-h"><b>Double chance</b><span>${O.r ? "estimée" : "cote non relevée"}</span></div><div class="mk-g">${["1N", "12", "N2"].map((l, i) => ob(l, dc[i], selOdd(m, l), true, false)).join("")}</div></div>
         ${ouLines.map(L => `<div class="mk"><div class="mk-h"><b>Nombre de buts ${L.replace(".", ",")}</b></div><div class="mk-g two">${ob("+ " + L.replace(".", ","), m.overs[L], O.ou[L][0], false, false)}${ob("− " + L.replace(".", ","), 1 - m.overs[L], O.ou[L][1], false, false)}</div></div>`).join("")}
         <div class="mk"><div class="mk-h"><b>Les 2 équipes marquent</b><span>cote non relevée</span></div><div class="mk-g two">${ob("Oui", m.btts, null)}${ob("Non", 1 - m.btts, null)}</div></div>
       </div><p class="note" style="margin-top:10px">Sous chaque cote : la probabilité de l'agent et la value (probabilité × cote − 1). Bord vert = value positive. Vérifie la cote sur Betclic avant de jouer, elle a pu bouger.</p></div>` : "";
@@ -555,7 +556,7 @@ function renderMatch() {
     <div class="when">${esc(dayLong(dayOf(m.utc)))} · ${hm(m.utc)}</div>
     <div class="mp-grid"><div class="mp-main">
       <div class="verdict${m.conf === "faible" ? " nobet" : ""}"><div class="eb">Le pronostic de l'agent · calculé ${ago(D.updated)}</div><div class="pk">${esc(pk.label)}</div>
-        <div class="vmeta"><span><small>Proba</small><b>${pct(pk.prob)}</b></span>${po ? `<span><small>Cote Betclic${pk.sel.length > 1 ? " ≈" : ""}</small><b>${fmt(po)}</b></span><span><small>Value</small><b class="${pv > 0 ? "pos" : "neg"}">${spct(pv)}</b></span>` : `<span><small>Cote juste</small><b>${fair(pk.prob)}</b></span>`}<span><small>Buts attendus</small><b>${fmt(m.xg[0], 1)} – ${fmt(m.xg[1], 1)}</b></span><span><small>Score probable</small><b>${esc(m.score)}</b></span></div>
+        <div class="vmeta"><span><small>Proba</small><b>${pct(pk.prob)}</b></span>${po ? `<span><small>Cote Betclic${selEst(pk.sel) ? " ≈" : ""}</small><b>${fmt(po)}</b></span><span><small>Value</small><b class="${pv > 0 ? "pos" : "neg"}">${spct(pv)}</b></span>` : `<span><small>Cote juste</small><b>${fair(pk.prob)}</b></span>`}<span><small>Buts attendus</small><b>${fmt(m.xg[0], 1)} – ${fmt(m.xg[1], 1)}</b></span><span><small>Score probable</small><b>${esc(m.score)}</b></span></div>
         <div class="row">${confChip(m.conf)}<span class="chip ${m.agree ? "pos" : "warn"}">${m.agree ? "modèles d'accord" : "modèles partagés"}</span></div>
         <p style="margin:0">${po ? (pv > 0 ? `La cote Betclic (${fmt(po)}) est au-dessus de la cote juste (${fair(pk.prob)}) : le pari a de la value.` : `La cote Betclic (${fmt(po)}) est sous la cote juste (${fair(pk.prob)}) : issue la plus solide, mais sans value. Mise réduite ou passe ton tour.`) : `La cote Betclic doit dépasser ${fair(pk.prob)} pour que ce pari ait de la value.`}</p>
         <p class="note" style="margin:0">Aucun pari n'est sûr : l'agent ne connaît ni les blessures ni les compositions. Vérifie-les avant de miser.</p></div>
@@ -567,7 +568,7 @@ function renderMatch() {
         <tr><td><b>Mélange FOOTBET</b></td><td class="n"></td><td class="n"><b>${pct(m.p[0])}</b></td><td class="n"><b>${pct(m.p[1])}</b></td><td class="n"><b>${pct(m.p[2])}</b></td></tr></tbody></table></div></div>
     </div>
     <div class="mp-side">${side}
-      <div class="card"${O.r ? " hidden" : ""}><h2>Probabilités <small>cote juste dessous</small></h2><div style="display:grid;gap:14px">
+      <div class="card"${side ? " hidden" : ""}><h2>Probabilités <small>cote juste dessous</small></h2><div style="display:grid;gap:14px">
         <div class="mk"><div class="mk-h"><b>Résultat</b></div><div class="mk-g">${["1", "N", "2"].map((l, i) => `<div class="ob" aria-pressed="${i === m.p.indexOf(Math.max(...m.p))}"><span>${l}</span><b>${pct(m.p[i])}</b><small>${fair(m.p[i])}</small></div>`).join("")}</div></div>
         <div class="mk"><div class="mk-h"><b>Double chance</b></div><div class="mk-g">${["1N", "12", "N2"].map((l, i) => `<div class="ob"><span>${l}</span><b>${pct(dc[i])}</b><small>${fair(dc[i])}</small></div>`).join("")}</div></div>
         <div class="mk"><div class="mk-h"><b>Les 2 équipes marquent</b></div><div class="mk-g two"><div class="ob"><span>Oui</span><b>${pct(m.btts)}</b><small>${fair(m.btts)}</small></div><div class="ob"><span>Non</span><b>${pct(1 - m.btts)}</b><small>${fair(1 - m.btts)}</small></div></div></div>

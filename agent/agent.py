@@ -267,14 +267,14 @@ def learn_weights(history):
     hit = sum(1 for h in fin if max(range(3), key=lambda i: h["final"][i]) == h["res"])
     brier = sum(sum((h["final"][i] - (1 if i == h["res"] else 0)) ** 2 for i in range(3)) for h in fin)
     picks = [h for h in fin if h.get("pick")]
-    phit = sum(1 for h in picks if h["pick"]["sel"] in WIN_SETS[h["res"]])
+    phit = sum(1 for h in picks if pick_ok(h["pick"]["sel"], h))
     bins = []
     for lo in (0.3, 0.4, 0.5, 0.6, 0.7, 0.8):
         sel = [h for h in fin if lo <= max(h["final"]) < lo + 0.1]
         if sel:
             ok = sum(1 for h in sel if max(range(3), key=lambda i: h["final"][i]) == h["res"])
             bins.append({"bin": f"{int(lo*100)}-{int(lo*100)+10} %", "n": len(sel), "pred": round(sum(max(h["final"]) for h in sel) / len(sel), 3), "real": round(ok / len(sel), 3)})
-    recent = [{"utc": h["utc"], "c": h["c"], "match": h["match"], "pick": (h.get("pick") or {}).get("label"), "ok": (h["pick"]["sel"] in WIN_SETS[h["res"]]) if h.get("pick") else None, "score": h.get("score")} for h in settled[:15]]
+    recent = [{"utc": h["utc"], "c": h["c"], "match": h["match"], "pick": (h.get("pick") or {}).get("label"), "ok": pick_ok(h["pick"]["sel"], h) if h.get("pick") else None, "score": h.get("score")} for h in settled[:15]]
     return W, {
         "settled": len(fin), "hitRate": round(hit / len(fin), 3) if fin else None,
         "pickHitRate": round(phit / len(picks), 3) if picks else None, "picks": len(picks),
@@ -282,11 +282,57 @@ def learn_weights(history):
     }
 
 WIN_SETS = {0: {"1", "1N", "12"}, 1: {"N", "1N", "N2"}, 2: {"2", "N2", "12"}}
+GOAL_LINES = (0.5, 1.5, 2.5, 3.5, 4.5)
+PICK_MIN = 0.70  # seuil de sûreté d'un pronostic
 
-def pick_of(p, h, a):
-    i = max(range(3), key=lambda k: p[k])
-    if i != 1 and p[i] >= 0.5:
-        return {"sel": "1" if i == 0 else "2", "label": f"Victoire de {h if i == 0 else a}", "prob": round(p[i], 3)}
+def pick_ok(sel, h):
+    """Le pronostic sel est-il gagnant ? Jugé sur le score final ("2-1") ; à défaut, sur le résultat 1/N/2."""
+    try:
+        hg, ag = (int(x) for x in str(h.get("score") or "").split("-"))
+    except ValueError:
+        return sel in WIN_SETS[h["res"]] if h.get("res") is not None and sel in WIN_SETS[0] | WIN_SETS[1] | WIN_SETS[2] else None
+    m = re.fullmatch(r"ou(\d+(?:\.\d+)?)-([01])", sel)
+    if m:
+        over = hg + ag > float(m.group(1))
+        return over if m.group(2) == "0" else not over
+    return {"1": hg > ag, "N": hg == ag, "2": hg < ag, "1N": hg >= ag, "12": hg != ag, "N2": hg <= ag,
+            "bt0": hg > 0 and ag > 0, "bt1": not (hg > 0 and ag > 0)}.get(sel)
+
+def goals_label(line, over):
+    L = f"{line:g}".replace(".", ",")
+    return f"{'Plus' if over else 'Moins'} de {L} but{'s' if line >= 2 else ''}"
+
+def pick_options(p, h, a, overs, btts, odds):
+    """Toutes les options de pari du match : (sel, libellé, probabilité, cote Betclic ou None)."""
+    r = (odds or {}).get("r"); ou = (odds or {}).get("ou") or {}
+    opts = [("1", f"Victoire de {h}", p[0], r[0] if r else None), ("N", "Match nul", p[1], r[1] if r else None),
+            ("2", f"Victoire de {a}", p[2], r[2] if r else None)]
+    for sel, lab, i, j in (("1N", f"{h} ou match nul", 0, 1), ("12", f"{h} ou {a}", 0, 2), ("N2", f"Match nul ou {a}", 1, 2)):
+        opts.append((sel, lab, p[i] + p[j], 1 / (1 / r[i] + 1 / r[j]) if r else None))  # double chance estimée sur les cotes 1N2 Betclic
+    for line, po in sorted(overs.items(), key=lambda x: float(x[0])):
+        o = ou.get(line) or [None, None]
+        opts.append((f"ou{line}-0", goals_label(float(line), True), po, o[0]))
+        opts.append((f"ou{line}-1", goals_label(float(line), False), 1 - po, o[1]))
+    opts.append(("bt0", "Les deux équipes marquent : oui", btts, None))
+    opts.append(("bt1", "Les deux équipes marquent : non", 1 - btts, None))
+    return opts
+
+def pick_of(p, h, a, overs=None, btts=None, odds=None):
+    """1) victoire si une équipe a 70 % ou plus ; 2) sinon l'option à 70 % ou plus qui a la cote la plus haute
+    (cote Betclic si elle existe, sinon cote juste 1 / probabilité) ; 3) sinon double chance du favori."""
+    for i in (0, 2):
+        if p[i] >= PICK_MIN:
+            return {"sel": "1" if i == 0 else "2", "label": f"Victoire de {h if i == 0 else a}", "prob": round(p[i], 3)}
+    if overs is not None and btts is not None:
+        best = None
+        for sel, lab, prob, odd in pick_options(p, h, a, overs, btts, odds):
+            if prob < PICK_MIN or prob >= 1:
+                continue
+            o = odd if isinstance(odd, (int, float)) and odd > 1 else 1 / prob
+            if best is None or o > best[0]:
+                best = (o, sel, lab, prob)
+        if best:
+            return {"sel": best[1], "label": best[2], "prob": round(best[3], 3)}
     if p[0] >= p[2]:
         return {"sel": "1N", "label": f"{h} ou match nul", "prob": round(p[0] + p[1], 3)}
     return {"sel": "N2", "label": f"Match nul ou {a}", "prob": round(p[1] + p[2], 3)}
@@ -310,8 +356,8 @@ def parse_event(e):
         elif mk.get("key") == "totals":
             for o in oc:
                 pt = o.get("point")
-                if pt in (1.5, 2.5, 3.5) and isinstance(o.get("price"), (int, float)):
-                    ou.setdefault(str(pt), [None, None])[0 if o.get("name") == "Over" else 1] = o["price"]
+                if isinstance(pt, (int, float)) and isinstance(o.get("price"), (int, float)):
+                    ou.setdefault(f"{float(pt):g}", [None, None])[0 if o.get("name") == "Over" else 1] = o["price"]
     ou = {k: v for k, v in ou.items() if all(v)}
     if not r and not ou:
         return None
@@ -373,10 +419,12 @@ def match_odds(cache, code, m):
             best, bs = e, sc
     return best if bs >= 1.1 else None
 
-def over_probs(lh, la):
+def over_probs(lh, la, extra=()):
+    """Probabilité de « plus de L buts » pour chaque ligne (0,5 à 4,5 + lignes Betclic), par la matrice de Poisson."""
     M = score_matrix(lh, la, 11)
     tot = sum(map(sum, M))
-    return {str(l): sum(M[i][j] for i in range(11) for j in range(11) if i + j > l) / tot for l in (1.5, 2.5, 3.5)}
+    lines = sorted(set(GOAL_LINES) | {float(x) for x in extra})
+    return {f"{l:g}": sum(M[i][j] for i in range(11) for j in range(11) if i + j > l) / tot for l in lines}
 
 # ---------------------------------------------------------------- combinés (cotes Betclic réelles)
 C_MIN, C_MAX, C_LEGS = 10.0, 16.0, 7
@@ -404,9 +452,8 @@ def combo_legs(rows):
             po = r["overs"].get(line)
             if po is None:
                 continue
-            L = line.replace(".", ",")
-            add("goal", f"ou{line}-0", f"Plus de {L} buts", ov, po)
-            add("goal", f"ou{line}-1", f"Moins de {L} buts", un, 1 - po)
+            add("goal", f"ou{line}-0", goals_label(float(line), True), ov, po)
+            add("goal", f"ou{line}-1", goals_label(float(line), False), un, 1 - po)
         if legs:
             allm.append(legs)
     return allm
@@ -540,7 +587,10 @@ def main():
             p = [sum(ws[c] * comp[c][i] for c in comp) / s for i in range(3)]
             lam = (0.65 * lp[0] + 0.35 * le[0], 0.65 * lp[1] + 0.35 * le[1]) if lp else le
             _, o25, btts, sc = from_matrix(score_matrix(*lam))
-            pk = pick_of(p, m["h"], m["a"])
+            ev = match_odds(odds, code, m)
+            evo = {"r": ev["r"], "ou": ev["ou"]} if ev else None
+            overs = over_probs(*lam, extra=(evo or {}).get("ou") or {})
+            pk = pick_of(p, m["h"], m["a"], overs, btts, evo)
             agree = len({max(range(3), key=lambda i: v[i]) for v in comp.values()}) == 1
             conf = "forte" if pk["prob"] >= 0.68 and agree else "moyenne" if pk["prob"] >= 0.58 else "faible"
             row = {
@@ -549,11 +599,10 @@ def main():
                 "p": [round(x, 3) for x in p], "comp": {c: [round(x, 3) for x in v] for c, v in comp.items()},
                 "xg": [round(lam[0], 2), round(lam[1], 2)], "score": sc, "over25": round(o25, 3), "btts": round(btts, 3),
                 "elo": [round(rh), round(ra)], "pick": pk, "conf": conf, "agree": agree,
-                "overs": {k: round(v, 3) for k, v in over_probs(*lam).items()},
+                "overs": {k: round(v, 3) for k, v in overs.items()},
             }
-            ev = match_odds(odds, code, m)
-            if ev:
-                row["odds"] = {"r": ev["r"], "ou": ev["ou"]}
+            if evo:
+                row["odds"] = evo
             out.append(row)
             if ko - NOW < timedelta(days=3):
                 history[str(m["id"])] = {"utc": m["utc"], "c": code, "match": f"{m['h']} – {m['a']}", "comp": row["comp"], "final": row["p"], "pick": pk, "res": None}
