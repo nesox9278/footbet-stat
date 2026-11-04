@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Agent statistique FOOTBET.
 
-Toutes les 15 minutes (GitHub Actions) :
-1. récupère les résultats et le calendrier (football-data.org, gratuit) et, si possible, les probabilités ClubElo ;
+Environ toutes les heures (GitHub Actions) :
+1. récupère les résultats et le calendrier (football-data.org, gratuit ; ESPN pour la Ligue Europa et la Ligue Conférence),
+   les probabilités ClubElo, les cotes Betclic et, via ESPN, les compositions et absences ;
 2. calcule trois modèles indépendants : Poisson pondéré dans le temps, Elo maison, ClubElo ;
 3. les mélange avec des poids appris sur ses propres erreurs passées (log-loss des matchs déjà joués) ;
 4. écrit docs/data/stats.json, lu par la page docs/index.html.
@@ -30,7 +31,15 @@ COMPS = {
     "FL1": ("Ligue 1", 1570), "PL": ("Premier League", 1650), "PD": ("LaLiga", 1630),
     "SA": ("Serie A", 1615), "BL1": ("Bundesliga", 1615), "PPL": ("Liga Portugal", 1545),
     "DED": ("Eredivisie", 1535), "CL": ("Ligue des champions", None),
+    "EL": ("Ligue Europa", None), "ECL": ("Ligue Conférence", None),
 }
+CUPS = ("CL", "EL", "ECL")
+# ESPN (API publique sans clé) : C3 et C4 (absentes de l'offre gratuite football-data.org), compos et absences
+ESPN = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+ESPN_LG = {"FL1": "fra.1", "PL": "eng.1", "PD": "esp.1", "SA": "ita.1", "BL1": "ger.1", "PPL": "por.1",
+           "DED": "ned.1", "CL": "uefa.champions", "EL": "uefa.europa", "ECL": "uefa.europa.conf"}
+ESPN_COMPS = ("EL", "ECL")
+T0 = time.time()
 DAYS_AHEAD = 8
 NOW = datetime.now(timezone.utc)
 
@@ -111,6 +120,15 @@ def collect():
     prev_cache = load_json(os.path.join(CACHE, "previous_season.json"), {})
     out, errors = {}, []
     for code in COMPS:
+        if code in ESPN_COMPS:
+            try:
+                ms = espn_matches(code)
+                out[code] = {"cur": ms, "prev": []}
+                log(code, len(ms), "matchs (ESPN)")
+            except Exception as e:
+                errors.append(f"{code} (ESPN): {e}")
+                log("ERREUR", code, e)
+            continue
         try:
             ms = [simplify(m, code) for m in fetch_matches(code)]
             key = f"{code}_{cur - 1}"
@@ -129,6 +147,81 @@ def collect():
         del prev_cache[k]
     save_json(os.path.join(CACHE, "previous_season.json"), prev_cache)
     return out, errors
+
+def espn_get(path, timeout=15):
+    if OFFLINE:
+        return load_json(os.path.join(OFFLINE, "espn_" + re.sub(r"[^A-Za-z0-9]+", "_", path).strip("_") + ".json"), {})
+    req = urllib.request.Request(f"{ESPN}/{path}", headers={"User-Agent": "footbet-agent/1.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def espn_event(e, code):
+    c = (e.get("competitions") or [{}])[0]
+    t = {x.get("homeAway"): x for x in c.get("competitors", [])}
+    h, a = t.get("home") or {}, t.get("away") or {}
+    st = (e.get("status") or {}).get("type") or {}
+    done = bool(st.get("completed"))
+    sc = lambda x: int(x["score"]) if done and str(x.get("score", "")).isdigit() else None
+    name = lambda x: (x.get("team") or {}).get("displayName")
+    return {"id": "E" + str(e.get("id")), "eid": str(e.get("id")), "c": code, "utc": (e.get("date") or "").replace("Z", ":00Z") if len(e.get("date") or "") == 17 else e.get("date"),
+            "status": "FINISHED" if done else "SCHEDULED" if st.get("state") == "pre" else "IN_PLAY",
+            "h": name(h), "a": name(a), "hid": (h.get("team") or {}).get("id"), "aid": (a.get("team") or {}).get("id"),
+            "alias": [[(h.get("team") or {}).get(k) for k in ("shortDisplayName", "name")], [(a.get("team") or {}).get(k) for k in ("shortDisplayName", "name")]],
+            "hg": sc(h), "ag": sc(a), "stage": None, "md": None}
+
+def espn_matches(code):
+    """Saison en cours mois par mois (ESPN refuse les plages de jours mais accepte dates=AAAAMM).
+    Les mois terminés sont gardés en cache : en régime normal, 1 à 2 appels par passage."""
+    path = os.path.join(CACHE, "espn_cups.json")
+    cache = load_json(path, {})
+    y, mo = season_of(NOW), 7
+    end = NOW + timedelta(days=DAYS_AHEAD + 1)
+    out = []
+    while (y, mo) <= (end.year, end.month):
+        key = f"{code}_{y}{mo:02d}"
+        done = (y, mo) < (NOW.year, NOW.month) and key in cache and ago_h(cache[key]["at"]) < 24 * 40 and (y, mo) != ((NOW - timedelta(days=3)).year, (NOW - timedelta(days=3)).month)
+        if not done:
+            d = espn_get(f"{ESPN_LG[code]}/scoreboard?dates={y}{mo:02d}&limit=500")
+            cache[key] = {"at": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "ev": [m for m in (espn_event(e, code) for e in d.get("events", [])) if m["h"] and m["a"] and m["utc"]]}
+        out += cache[key]["ev"]
+        y, mo = (y + 1, 1) if mo == 12 else (y, mo + 1)
+    for k in [k for k in cache if int(k.split("_")[1][:4]) < season_of(NOW)]:
+        del cache[k]
+    save_json(path, cache)
+    seen = set()
+    return [m for m in out if not (m["id"] in seen or seen.add(m["id"]))]
+
+def unify_names(data):
+    """Donne aux équipes ESPN (C3/C4) le nom football-data quand le club est connu, pour partager Elo et forme."""
+    known = {}
+    for code, d in data.items():
+        if code not in ESPN_COMPS:
+            for m in d["cur"] + d["prev"]:
+                for t in (m["h"], m["a"]):
+                    if t:
+                        known[norm(t)] = t
+    keys = list(known)
+    cache = {}
+    def find(names):
+        for n in names:
+            k = norm(n)
+            if not k:
+                continue
+            if k in known:
+                return known[k]
+            c = difflib.get_close_matches(k, keys, n=1, cutoff=0.86)
+            if c:
+                return known[c[0]]
+        return None
+    for code in ESPN_COMPS:
+        for m in (data.get(code) or {}).get("cur", []):
+            al = m.pop("alias", [[], []])
+            for side_, i in (("h", 0), ("a", 1)):
+                key = m[side_]
+                if key not in cache:
+                    cache[key] = find([key] + [x for x in al[i] if x])
+                if cache[key]:
+                    m[side_] = cache[key]
 
 def fetch_clubelo():
     """Probabilités ClubElo des prochains matchs : {(nom_normalisé_dom, nom_normalisé_ext): [p1, pN, p2]}."""
@@ -340,7 +433,12 @@ def pick_of(p, h, a, overs=None, btts=None, odds=None):
 # ---------------------------------------------------------------- cotes Betclic (The Odds API, offre gratuite)
 SPORTS = {"FL1": "soccer_france_ligue_one", "PL": "soccer_epl", "PD": "soccer_spain_la_liga", "SA": "soccer_italy_serie_a",
           "BL1": "soccer_germany_bundesliga", "PPL": "soccer_portugal_primeira_liga", "DED": "soccer_netherlands_eredivisie",
-          "CL": "soccer_uefa_champs_league"}
+          "CL": "soccer_uefa_champs_league", "EL": "soccer_uefa_europa_league", "ECL": "soccer_uefa_europa_conference_league"}
+# Budget The Odds API (offre gratuite, 500 crédits/mois) : un appel /odds coûte marchés × régions = 2 (h2h + totals) × 1
+# (betclic_fr seul = 1 région) = 2 crédits. Un relevé par jour (vers 9 h, Paris) des 10 compétitions coûterait
+# 10 × 2 × 31 = 620 crédits : trop. On interroge donc d'abord /events (gratuit, 0 crédit) et on ne paie que pour les
+# compétitions qui ont un match dans les 36 h : en pratique 4 à 6 par jour, soit environ 250 à 370 crédits par mois.
+ODDS_COST = 2
 
 def parse_event(e):
     bk = next((b for b in e.get("bookmakers", []) if b.get("key") == "betclic_fr"), None)
@@ -384,9 +482,20 @@ def fetch_odds():
         return cache
     to = (NOW + timedelta(hours=36)).strftime("%Y-%m-%dT%H:%M:%SZ")
     got = 0
+    frm = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
     for code, sport in SPORTS.items():
         if cache.get("remaining") is not None and cache["remaining"] < 4:
             log("crédits The Odds API presque épuisés : arrêt jusqu'au mois prochain"); break
+        try:  # /events ne consomme aucun crédit : on vérifie qu'il y a des matchs avant de payer le relevé
+            req = urllib.request.Request(f"https://api.the-odds-api.com/v4/sports/{sport}/events?apiKey={ODDS_KEY}"
+                                         f"&commenceTimeFrom={frm}&commenceTimeTo={to}", headers={"User-Agent": "footbet-agent/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                if not json.loads(resp.read().decode("utf-8")):
+                    cache["events"][code] = []
+                    log("cotes", code, ": aucun match dans les 36 h, relevé sauté (0 crédit)")
+                    continue
+        except Exception as e:
+            log("liste des matchs The Odds API indisponible", code, e)
         url = (f"https://api.the-odds-api.com/v4/sports/{sport}/odds?apiKey={ODDS_KEY}&bookmakers=betclic_fr"
                f"&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso&commenceTimeTo={to}")
         try:
@@ -526,11 +635,103 @@ def table_and_form(matches):
     pos = {t: i + 1 for i, t in enumerate(order)}
     return pos, {t: " ".join(reversed(v[-5:])) for t, v in F.items()}, T
 
+# ---------------------------------------------------------------- compositions et absences (ESPN, sans clé)
+# Absences : ESPN ne publie pas les blessés pour le football (réponses vides, vérifié en novembre 2026) ; si le résumé
+# de match en contient un jour, ils sont repris. Aucun appel dédié n'est donc fait pour les absences.
+NEWS_LINEUP_WINDOW_H = 2   # compos : seulement dans les 2 h avant le coup d'envoi
+NEWS_MAX_CALLS = 60        # plafond d'appels ESPN par passage
+NEWS_MAX_SECONDS = 420     # au-delà de 7 min de passage, on n'interroge plus ESPN
+
+def ago_h(iso):
+    return (NOW - datetime.fromisoformat(iso.replace("Z", "+00:00"))).total_seconds() / 3600 if iso else 1e9
+
+def espn_day(code, day, cache):
+    if (code, day) not in cache:
+        cache[(code, day)] = [espn_event(e, code) for e in espn_get(f"{ESPN_LG[code]}/scoreboard?dates={day}").get("events", [])]
+    return cache[(code, day)]
+
+def same_team(x, names):
+    k = norm(x)
+    return any(n and (norm(n) == k or difflib.SequenceMatcher(None, norm(n), k).ratio() >= 0.8 or (len(k) >= 5 and (k in norm(n) or norm(n) in k))) for n in names)
+
+def find_eid(r, cache):
+    if r.get("eid"):
+        return r["eid"]
+    ko = datetime.fromisoformat(r["utc"].replace("Z", "+00:00"))
+    for e in espn_day(r["c"], ko.strftime("%Y%m%d"), cache):
+        et = datetime.fromisoformat(e["utc"].replace("Z", "+00:00"))
+        al = e.get("alias") or [[], []]
+        if abs((et - ko).total_seconds()) <= 3 * 3600 and same_team(r["h"], [e["h"]] + al[0]) and same_team(r["a"], [e["a"]] + al[1]):
+            return e["eid"]
+    return None
+
+INJ_SURE = {"out", "suspension", "suspended", "injured reserve", "ir"}
+def parse_summary(s, r):
+    """Compos (rosters) et absences (injuries) d'un résumé de match ESPN, rangées [domicile, extérieur]."""
+    comps = ((s.get("header") or {}).get("competitions") or [{}])[0].get("competitors") or []
+    side_of = {str((c.get("team") or {}).get("id")): (0 if c.get("homeAway") == "home" else 1) for c in comps}
+    lu = [None, None]
+    for ro in s.get("rosters") or []:
+        i = 0 if ro.get("homeAway") == "home" else 1
+        xi = [x for x in ro.get("roster") or [] if x.get("starter")]
+        if len(xi) >= 11:
+            lu[i] = {"st": "officielle", "f": ro.get("formation"),
+                     "xi": [{"n": (x.get("athlete") or {}).get("displayName"), "p": (x.get("position") or {}).get("abbreviation"), "j": x.get("jersey")} for x in xi]}
+    ab, has_inj = [[], []], "injuries" in s
+    for blk in s.get("injuries") or []:
+        tm = blk.get("team") or {}
+        i = side_of.get(str(tm.get("id")))
+        if i is None:
+            i = 0 if same_team(tm.get("displayName") or "", [r["h"]]) else 1
+        for inj in blk.get("injuries") or []:
+            st = str(inj.get("status") or (inj.get("type") or {}).get("description") or "").strip()
+            det = inj.get("details") or {}
+            why = det.get("type") or det.get("detail") or (inj.get("type") or {}).get("description") or st or "non précisée"
+            ab[i].append({"n": (inj.get("athlete") or {}).get("displayName"), "r": str(why),
+                          "s": "confirmé" if st.lower() in INJ_SURE or "susp" in str(why).lower() else "incertain"})
+    return lu, ab, has_inj
+
+def team_news(rows, errors):
+    path = os.path.join(CACHE, "lineups.json")
+    cache = load_json(path, {})
+    live = {str(r["id"]) for r in rows}
+    cache = {k: v for k, v in cache.items() if k in live}
+    now_iso = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    sb, calls, fails = {}, 0, 0
+    for r in sorted(rows, key=lambda x: x["utc"]):
+        k = str(r["id"])
+        c = cache.setdefault(k, {})
+        hours = (datetime.fromisoformat(r["utc"].replace("Z", "+00:00")) - NOW).total_seconds() / 3600
+        need_lu = hours <= NEWS_LINEUP_WINDOW_H and not (c.get("lu") and all(c["lu"]))
+        if need_lu and calls < NEWS_MAX_CALLS and time.time() - T0 < NEWS_MAX_SECONDS and fails < 4:
+            try:
+                eid = c.get("eid") or find_eid(r, sb)
+                calls += 1
+                if eid:
+                    c["eid"] = eid
+                    lu, ab, has_inj = parse_summary(espn_get(f"{ESPN_LG[r['c']]}/summary?event={eid}"), r)
+                    calls += 1
+                    if any(lu):
+                        c["lu"], c["luAt"] = lu, now_iso
+                    if has_inj:
+                        c["abs"], c["absAt"], c["absOk"] = ab, now_iso, True
+            except Exception as e:
+                fails += 1
+                log("ESPN indisponible pour", r["h"], "-", r["a"], e)
+        lu = c.get("lu") or [None, None]
+        r["news"] = {"src": "ESPN", "abs": c.get("abs"), "absAt": c.get("absAt"), "absOk": c.get("absOk"),
+                     "lu": [x or {"st": "inconnue"} for x in lu], "luAt": c.get("luAt")}
+    if fails >= 4:
+        errors.append("ESPN (compos/absences) ne répond pas à ce passage")
+    save_json(path, cache)
+    log("compos/absences ESPN :", calls, "appels ;", sum(1 for r in rows if any(x.get("st") == "officielle" for x in r["news"]["lu"])), "compos officielles")
+
 # ---------------------------------------------------------------- principal
 def main():
     if not TOKEN and not OFFLINE:
         log("FOOTBALL_DATA_TOKEN manquant : ajoute-le dans Settings > Secrets and variables > Actions.")
     data, errors = collect()
+    unify_names(data)
     clubelo = fetch_clubelo()
     odds = fetch_odds()
     ce_keys = list(clubelo.keys())
@@ -546,14 +747,18 @@ def main():
                 finished_all.append(m)
     start = {c: v[1] for c, v in COMPS.items()}
     R = elo_ratings(finished_all, start)
+    nplayed = {}
+    for m in finished_all:
+        for t in (m["h"], m["a"]):
+            nplayed[t] = nplayed.get(t, 0) + 1
 
     out = []
     for code, d in data.items():
         fin_cur = [m for m in d["cur"] if m["status"] == "FINISHED" and m["hg"] is not None]
         fin_prev = [m for m in d["prev"] if m["hg"] is not None]
-        model = fit_poisson(fin_cur + fin_prev, xi=0.006) if code != "CL" else None
-        pos, form, table = table_and_form(fin_cur) if code != "CL" else ({}, {}, {})
-        if code == "CL":  # forme toutes compétitions pour la C1
+        model = fit_poisson(fin_cur + fin_prev, xi=0.006) if code not in CUPS else None
+        pos, form, table = table_and_form(fin_cur) if code not in CUPS else ({}, {}, {})
+        if code in CUPS:  # forme toutes compétitions pour les coupes d'Europe
             _, form, _ = table_and_form([m for m in finished_all])
         for m in d["cur"]:
             if m["status"] == "FINISHED" and m["hg"] is not None:
@@ -582,17 +787,37 @@ def main():
                     ce = clubelo.get(tuple(cand[0].split("|")))
             if ce:
                 comp["clubelo"] = ce
-            ws = {c: W[c] for c in comp}
+            ev = match_odds(odds, code, m)
+            evo = {"r": ev["r"], "ou": ev["ou"]} if ev else None
+            src = None
+            if code in ESPN_COMPS and min(nplayed.get(m["h"], 0), nplayed.get(m["a"], 0)) < 8:
+                # équipe sans historique dans le modèle (petit championnat) : l'Elo maison ne vaut rien ici
+                del comp["elo"]
+                if ce:
+                    src = "ClubElo (équipe sans historique dans le modèle)"
+                elif evo and evo.get("r"):
+                    inv = [1 / x for x in evo["r"]]
+                    comp["betclic"] = [x / sum(inv) for x in inv]
+                    src = "Cotes Betclic sans marge (équipe sans historique dans le modèle)"
+                else:
+                    comp["elo"] = elo_probs(rh, ra)
+                    src = "Elo par défaut : équipe sans historique, ni ClubElo ni cote Betclic (fiabilité faible)"
+                if "elo" not in comp:  # buts attendus tirés des probabilités retenues
+                    q = comp.get("clubelo") or comp["betclic"]
+                    e = min(0.97, max(0.03, q[0] + q[1] / 2))
+                    dd = math.log10(e / (1 - e))
+                    le = (1.35 * math.exp(0.55 * dd), 1.35 * math.exp(-0.55 * dd))
+            ws = {c: W.get(c, 1.0) for c in comp}
             s = sum(ws.values())
             p = [sum(ws[c] * comp[c][i] for c in comp) / s for i in range(3)]
             lam = (0.65 * lp[0] + 0.35 * le[0], 0.65 * lp[1] + 0.35 * le[1]) if lp else le
             _, o25, btts, sc = from_matrix(score_matrix(*lam))
-            ev = match_odds(odds, code, m)
-            evo = {"r": ev["r"], "ou": ev["ou"]} if ev else None
             overs = over_probs(*lam, extra=(evo or {}).get("ou") or {})
             pk = pick_of(p, m["h"], m["a"], overs, btts, evo)
             agree = len({max(range(3), key=lambda i: v[i]) for v in comp.values()}) == 1
             conf = "forte" if pk["prob"] >= 0.68 and agree else "moyenne" if pk["prob"] >= 0.58 else "faible"
+            if src and src.startswith("Elo par défaut"):
+                conf = "faible"  # aucune donnée fiable sur au moins une des équipes
             row = {
                 "id": m["id"], "c": code, "utc": m["utc"], "h": m["h"], "a": m["a"], "md": m["md"],
                 "pos": [pos.get(m["h"]), pos.get(m["a"])], "form": [form.get(m["h"], ""), form.get(m["a"], "")],
@@ -603,6 +828,10 @@ def main():
             }
             if evo:
                 row["odds"] = evo
+            if src:
+                row["src"] = src
+            if m.get("eid"):
+                row["eid"] = m["eid"]
             out.append(row)
             if ko - NOW < timedelta(days=3):
                 history[str(m["id"])] = {"utc": m["utc"], "c": code, "match": f"{m['h']} – {m['a']}", "comp": row["comp"], "final": row["p"], "pick": pk, "res": None}
@@ -611,14 +840,19 @@ def main():
     history = {k: v for k, v in history.items() if v["utc"] >= cutoff}
     save_json(hist_path, history)
     out.sort(key=lambda r: r["utc"])
+    try:
+        team_news(out, errors)
+    except Exception as e:  # jamais bloquant
+        errors.append(f"compos/absences ESPN: {e}")
+        log("ERREUR compos/absences", e)
     top = sorted([r for r in out if r["utc"] < (NOW + timedelta(hours=36)).isoformat()], key=lambda r: -r["pick"]["prob"])[:8]
     import random
     soon = [r for r in out if r.get("odds") and r["utc"] < (NOW + timedelta(hours=36)).isoformat()]
     combos = build_combos(soon, random.Random(int(NOW.strftime("%Y%m%d"))))
     stats = {
-        "updated": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "everyMin": 15, "errors": errors,
+        "updated": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "everyMin": 60, "errors": errors,
         "competitions": {c: v[0] for c, v in COMPS.items()}, "weights": W, "quality": quality,
-        "sources": ["football-data.org (résultats, calendrier)", "ClubElo (probabilités Elo)" if clubelo else "ClubElo indisponible à ce passage", "Cotes Betclic via The Odds API" if odds.get("at") else "Cotes Betclic pas encore relevées"],
+        "sources": ["football-data.org (résultats, calendrier)", "ESPN (Ligue Europa, Ligue Conférence, compositions, absences)", "ClubElo (probabilités Elo)" if clubelo else "ClubElo indisponible à ce passage", "Cotes Betclic via The Odds API" if odds.get("at") else "Cotes Betclic pas encore relevées"],
         "matches": out, "top": [r["id"] for r in top], "combos": combos,
         "odds": {"at": odds.get("at"), "remaining": odds.get("remaining"), "matched": sum(1 for r in out if r.get("odds")), "source": "Betclic (via The Odds API)"},
     }

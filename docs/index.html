@@ -95,6 +95,7 @@ label.f{display:grid;gap:5px;font-size:12px;font-weight:600;letter-spacing:.06em
 .empty{border:1px dashed var(--line);border-radius:12px;padding:28px 16px;text-align:center;color:var(--ink-2);display:grid;gap:6px;justify-items:center}
 .empty b{font-family:var(--f-display);font-weight:700;font-size:22px;text-transform:uppercase;color:var(--ink);letter-spacing:.03em}
 .chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700;white-space:nowrap}
+.xi,.abs{margin:6px 0 0;padding:0;list-style:none;display:grid;gap:2px;font-size:14px} .xi small,.abs small{font-size:12px}
 .chip.pos{background:var(--pos-soft);color:var(--pos)} .chip.neg{background:var(--surface-3);color:var(--ink-2)} .chip.warn{background:var(--warn-soft);color:var(--warn)} .chip.red{background:var(--red-soft);color:#FFB3B8}
 
 /* Matchs */
@@ -382,7 +383,7 @@ a.btn{text-decoration:none}
   <!-- ============ ACCUEIL ============ -->
   <section class="view" id="v-accueil" hidden>
     <div class="hero">
-      <div><p class="eb" id="h-date"></p><h1 class="h1" id="h-hello">Bonjour Noah</h1><p class="lead" id="h-lead">Les probabilités de l'agent FOOTBET, mises à jour toutes les 15 minutes.</p></div>
+      <div><p class="eb" id="h-date"></p><h1 class="h1" id="h-hello">Bonjour Noah</h1><p class="lead" id="h-lead">Les probabilités de l'agent FOOTBET, mises à jour environ toutes les heures.</p></div>
       <div class="row"><a class="btn" href="#matchs">Voir les matchs</a><a class="btn ghost" href="#combines">Combinés du jour</a></div>
     </div>
     <div class="status" id="h-status"><span><span class="dot old"></span>Chargement des statistiques…</span></div>
@@ -443,8 +444,8 @@ const dayShort = d => { const t = today(); return d === t ? "Auj." : d === addDa
 const ago = iso => { const m = Math.round((Date.now() - Date.parse(iso)) / 60000); if (!Number.isFinite(m)) return ""; if (m < 2) return "à l'instant"; if (m < 60) return `il y a ${m} min`; const h = Math.floor(m / 60); if (h < 48) return `il y a ${h} h`; return `il y a ${Math.round(h / 24)} jours`; };
 const store = { get(k, d) { try { const v = localStorage.getItem("fbs:" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem("fbs:" + k, JSON.stringify(v)); } catch (e) {} } };
 const groupBy = (l, f) => l.reduce((a, x) => { const k = f(x); (a[k] = a[k] || []).push(x); return a; }, {});
-const SHORT = { CL: "C1" }, ORDER = ["FL1", "PL", "PD", "SA", "BL1", "PPL", "DED", "CL"];
-const CN = { poisson: "Poisson", elo: "Elo FOOTBET", clubelo: "ClubElo" };
+const SHORT = { CL: "C1", EL: "C3", ECL: "C4" }, ORDER = ["FL1", "PL", "PD", "SA", "BL1", "PPL", "DED", "CL", "EL", "ECL"];
+const CN = { poisson: "Poisson", elo: "Elo FOOTBET", clubelo: "ClubElo", betclic: "Betclic sans marge" };
 const CONF = { forte: 3, moyenne: 2, faible: 1 };
 
 let D = null, mode = "loading", ui = store.get("ui", { day: null, comps: [], strong: false }), cur = store.get("cur", null), lastView = "accueil";
@@ -477,7 +478,7 @@ function openMatch(id) { cur = id; store.set("cur", id); if (route() === "match"
 /* ===== Rendu ===== */
 function statusHTML() {
   if (!D) return `<span><span class="dot old"></span>Chargement des statistiques…</span>`;
-  const old = Date.now() - Date.parse(D.updated) > 45 * 60000, next = new Date(Date.parse(D.updated) + (D.everyMin || 15) * 60000);
+  const old = Date.now() - Date.parse(D.updated) > 150 * 60000, next = new Date(Date.parse(D.updated) + (D.everyMin || 60) * 60000);
   return `<span><span class="dot${old ? " old" : ""}"></span>Statistiques de l'agent mises à jour ${ago(D.updated)} · prochaine vers ${next.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>`;
 }
 function render() {
@@ -502,9 +503,9 @@ function renderAccueil() {
   if (!D) { ["#h-picks", "#h-next"].forEach(s => { $(s).innerHTML = mode === "error" ? `<div class="empty"><b>Pas encore de stats</b><span>L'agent les publie à son premier passage (onglet Actions du dépôt GitHub).</span></div>` : `<div class="empty"><b>Chargement…</b></div>`; }); return; }
   const ms = upcoming(), t = today(), tm = ms.filter(m => dayOf(m.utc) === t), Q = D.quality || {};
   $("#h-lead").textContent = tm.length ? `${tm.length} match${tm.length > 1 ? "s" : ""} aujourd'hui dans tes compétitions, ${ms.length} sur les 8 prochains jours.` : `Pas de match aujourd'hui : ${ms.length} sur les 8 prochains jours.`;
-  const old = Date.now() - Date.parse(D.updated) > 45 * 60000, al = $("#h-alert");
+  const old = Date.now() - Date.parse(D.updated) > 150 * 60000, al = $("#h-alert");
   al.hidden = !old && !(D.errors || []).length;
-  al.textContent = old ? "L'agent n'a pas publié depuis plus de 45 minutes : vérifie l'onglet Actions du dépôt GitHub." : "Données partielles à ce passage : " + (D.errors || []).join(" · ");
+  al.textContent = old ? "L'agent n'a pas publié depuis plus de 2 h 30 : vérifie l'onglet Actions du dépôt GitHub." : "Données partielles à ce passage : " + (D.errors || []).join(" · ");
   $("#h-kpis").innerHTML = kpisHTML(Q, ms);
   const top = D.top.map(id => ms.find(m => m.id === id)).filter(Boolean).sort((a, b) => (CONF[b.conf] || 0) - (CONF[a.conf] || 0) || b.pick.prob - a.pick.prob);
   $("#h-picks").innerHTML = top.length ? top.map(m => hrow(m, true)).join("") : `<div class="empty"><b>Aucun match</b><span>Rien dans les 36 prochaines heures.</span></div>`;
@@ -559,12 +560,14 @@ function renderMatch() {
         <div class="vmeta"><span><small>Proba</small><b>${pct(pk.prob)}</b></span>${po ? `<span><small>Cote Betclic${selEst(pk.sel) ? " ≈" : ""}</small><b>${fmt(po)}</b></span><span><small>Value</small><b class="${pv > 0 ? "pos" : "neg"}">${spct(pv)}</b></span>` : `<span><small>Cote juste</small><b>${fair(pk.prob)}</b></span>`}<span><small>Buts attendus</small><b>${fmt(m.xg[0], 1)} – ${fmt(m.xg[1], 1)}</b></span><span><small>Score probable</small><b>${esc(m.score)}</b></span></div>
         <div class="row">${confChip(m.conf)}<span class="chip ${m.agree ? "pos" : "warn"}">${m.agree ? "modèles d'accord" : "modèles partagés"}</span></div>
         <p style="margin:0">${po ? (pv > 0 ? `La cote Betclic (${fmt(po)}) est au-dessus de la cote juste (${fair(pk.prob)}) : le pari a de la value.` : `La cote Betclic (${fmt(po)}) est sous la cote juste (${fair(pk.prob)}) : issue la plus solide, mais sans value. Mise réduite ou passe ton tour.`) : `La cote Betclic doit dépasser ${fair(pk.prob)} pour que ce pari ait de la value.`}</p>
-        <p class="note" style="margin:0">Aucun pari n'est sûr : l'agent ne connaît ni les blessures ni les compositions. Vérifie-les avant de miser.</p></div>
+        ${m.src ? `<p class="note" style="margin:0"><b>Source des probabilités :</b> ${esc(m.src)}.</p>` : ""}
+        <p class="note" style="margin:0">Aucun pari n'est sûr : le calcul ne tient pas compte des absences ni des compositions. Vérifie-les avant de miser.</p></div>
+      ${newsHTML(m)}
       <div class="card"><h2>Forme récente <small>du plus récent au plus ancien</small></h2><div class="two">
         <div><b>${esc(m.h)}</b>${formPills(m.form[0])}<p class="note" style="margin-top:6px">Elo ${m.elo[0]}</p></div>
         <div><b>${esc(m.a)}</b>${formPills(m.form[1])}<p class="note" style="margin-top:6px">Elo ${m.elo[1]}</p></div></div></div>
       <div class="card"><h2>Probabilités par modèle</h2><div class="tw"><table class="t"><thead><tr><th>Modèle</th><th class="n">Poids</th><th class="n">1</th><th class="n">N</th><th class="n">2</th></tr></thead><tbody>
-        ${Object.entries(m.comp).map(([k, v]) => `<tr><td>${CN[k] || k}</td><td class="n">${pct(W[k] || 0)}</td><td class="n">${pct(v[0])}</td><td class="n">${pct(v[1])}</td><td class="n">${pct(v[2])}</td></tr>`).join("")}
+        ${Object.entries(m.comp).map(([k, v]) => `<tr><td>${CN[k] || k}</td><td class="n">${W[k] ? pct(W[k]) : "—"}</td><td class="n">${pct(v[0])}</td><td class="n">${pct(v[1])}</td><td class="n">${pct(v[2])}</td></tr>`).join("")}
         <tr><td><b>Mélange FOOTBET</b></td><td class="n"></td><td class="n"><b>${pct(m.p[0])}</b></td><td class="n"><b>${pct(m.p[1])}</b></td><td class="n"><b>${pct(m.p[2])}</b></td></tr></tbody></table></div></div>
     </div>
     <div class="mp-side">${side}
@@ -575,6 +578,16 @@ function renderMatch() {
         <div class="mk"><div class="mk-h"><b>Nombre de buts 2,5</b></div><div class="mk-g two"><div class="ob"><span>+ 2,5</span><b>${pct(m.over25)}</b><small>${fair(m.over25)}</small></div><div class="ob"><span>− 2,5</span><b>${pct(1 - m.over25)}</b><small>${fair(1 - m.over25)}</small></div></div></div>
       </div><p class="note" style="margin-top:10px">Sous chaque pourcentage : la cote juste (1 ÷ probabilité). Une cote Betclic plus haute = pari avec de la value.</p></div>
     </div></div>`;
+}
+function newsHTML(m) {
+  const N = m.news || {}, lu = N.lu || [{}, {}], ab = N.abs, tm = [m.h, m.a];
+  const luSt = x => x && x.st === "officielle" ? `<span class="chip pos">officielle</span>` : x && x.st === "probable" ? `<span class="chip warn">probable</span>` : `<span class="chip neg">pas encore connue</span>`;
+  const luBody = x => x && x.xi ? `${x.f ? `<p class="note" style="margin:4px 0">Schéma ${esc(x.f)}</p>` : ""}<ol class="xi">${x.xi.map(p => `<li>${p.j ? `<span class="dim num">${esc(p.j)}</span> ` : ""}${esc(p.n || "?")}${p.p ? ` <small class="dim">${esc(p.p)}</small>` : ""}</li>`).join("")}</ol>` : `<p class="note" style="margin:4px 0">Publiée environ 1 h avant le coup d'envoi.</p>`;
+  const abBody = i => !N.absOk ? "" : (ab && ab[i] && ab[i].length ? `<ul class="abs">${ab[i].map(x => `<li>${esc(x.n || "?")} <small class="dim">${esc(x.r)}</small> <span class="chip ${x.s === "confirmé" ? "red" : "warn"}">${esc(x.s)}</span></li>`).join("")}</ul>` : `<p class="note" style="margin:4px 0">Aucune absence signalée.</p>`);
+  const maj = [N.luAt ? "compos " + ago(N.luAt) : "", N.absAt ? "absences " + ago(N.absAt) : ""].filter(Boolean).join(" · ");
+  return `<div class="card"><h2>Compositions et absences <small>source ${esc(N.src || "ESPN")}${maj ? " · mis à jour " + esc(maj) : ""}</small></h2><div class="two">
+    ${[0, 1].map(i => `<div><b>${esc(tm[i])}</b> ${luSt(lu[i])}${luBody(lu[i])}${abBody(i)}</div>`).join("")}</div>
+    ${N.absOk ? "" : `<p class="note" style="margin-top:8px">Absences (blessés, suspendus) : aucune source gratuite fiable ne les fournit pour l'instant. Vérifie-les sur le site du club ou sur Betclic avant de miser.</p>`}</div>`;
 }
 function comboCard(t, n) {
   return `<div class="combo" data-cid="${esc(t.id)}"><div class="combo-h"><b>${esc(t.type)} ${n}</b><span class="o">${fmt(t.odd)}</span></div>

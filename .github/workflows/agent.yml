@@ -2,7 +2,7 @@ name: Agent FOOTBET Stats
 
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"   # toutes les 15 minutes (heure UTC), décalé des heures pleines
+    - cron: "7,22,37,52 * * * *"   # demandé toutes les 15 min ; en pratique GitHub n'en lance qu'environ 1 par heure
   workflow_dispatch: {}             # bouton « Run workflow » pour lancer à la main
 
 permissions:

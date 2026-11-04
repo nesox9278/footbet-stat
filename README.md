@@ -1,9 +1,9 @@
 # FOOTBET Stats — agent statistique gratuit
 
-L'agent tourne gratuitement sur **GitHub Actions** toutes les 15 minutes et publie une page web sur **GitHub Pages**. Aucun serveur à payer, aucun ordinateur à laisser allumé.
+L'agent tourne gratuitement sur **GitHub Actions** environ toutes les heures (GitHub retarde les tâches planifiées) et publie une page web sur **GitHub Pages**. Aucun serveur à payer, aucun ordinateur à laisser allumé.
 
 ## Ce que fait l'agent (`agent/agent.py`)
-1. Récupère résultats et calendrier de 8 compétitions (Ligue 1, Premier League, LaLiga, Serie A, Bundesliga, Liga Portugal, Eredivisie, Ligue des champions) sur **football-data.org** (offre gratuite).
+1. Récupère résultats et calendrier de 8 compétitions (Ligue 1, Premier League, LaLiga, Serie A, Bundesliga, Liga Portugal, Eredivisie, Ligue des champions) sur **football-data.org** (offre gratuite), plus la Ligue Europa (C3) et la Ligue Conférence (C4) via l'API publique d'**ESPN** (sans clé), qui fournit aussi les compositions officielles environ 1 h avant les matchs.
 2. Récupère les probabilités **ClubElo** (gratuit, sans clé) quand le service répond.
 3. Calcule 3 modèles : **Poisson** pondéré dans le temps (force d'attaque/défense, avantage du terrain), **Elo FOOTBET** (toutes compétitions), **ClubElo**.
 4. **Apprend de ses erreurs** : il garde ses pronostics d'avant-match, les compare aux résultats et donne plus de poids aux modèles qui se trompent le moins (log-loss), à partir de 30 matchs réglés.
