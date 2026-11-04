@@ -31,8 +31,16 @@ jobs:
         run: |
           git config user.name "footbet-agent"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/data agent/cache
-          if git diff --staged --quiet; then echo "Rien de nouveau"; exit 0; fi
-          git commit -m "Stats $(date -u +%Y-%m-%dT%H:%MZ)"
-          git pull --rebase --autostash || true
-          git push
+          mkdir -p /tmp/fb && cp -r docs/data /tmp/fb/data && cp -r agent/cache /tmp/fb/cache
+          for essai in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            rm -rf docs/data agent/cache
+            cp -r /tmp/fb/data docs/data && cp -r /tmp/fb/cache agent/cache
+            git add docs/data agent/cache
+            if git diff --staged --quiet; then echo "Rien de nouveau"; exit 0; fi
+            git commit -m "Stats $(date -u +%Y-%m-%dT%H:%MZ)"
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((essai * 5))
+          done
+          exit 1
