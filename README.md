@@ -27,3 +27,4 @@ L'agent tourne gratuitement sur **GitHub Actions** toutes les 15 minutes et publ
 - Tester en local : `python3 agent/agent.py` avec la variable `FOOTBALL_DATA_TOKEN`.
 
 Aucun pari n'est sûr : ce sont des probabilités. Paris interdits aux mineurs. Joueurs Info Service : 09 74 75 13 13.
+
