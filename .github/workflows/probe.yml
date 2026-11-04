@@ -14,13 +14,22 @@ jobs:
               r = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "footbet-agent/1.0"}), timeout=20)
               return json.loads(r.read())
           B = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
-          for q in ("", "?dates=20261101-20261115", "?dates=20261001-20261115", "?dates=20260801-20261115&limit=500", "?dates=20260701-20261115&limit=300"):
+          def tr(u, f=lambda d: str(d)[:600]):
               try:
-                  d = g(B + "uefa.europa/scoreboard" + q); print("OK", q, len(d.get("events", [])))
+                  print("OK", u.split("?")[0][-60:], u.split("?")[-1][:80], f(g(u)))
               except Exception as ex:
-                  print("FAIL", q, ex)
-          for lg in ("uefa.europa", "uefa.europa.conf"):
-              d = g(B + lg + "/scoreboard?dates=20260901-20261115")
+                  print("FAIL", u, ex)
+          ne = lambda d: (len(d.get("events", [])), [(e["date"], e["name"]) for e in d.get("events", [])[:3]])
+          for q in ("", "?dates=20261105", "?dates=20261105-20261106", "?dates=20261022", "?dates=202611", "?dates=20261105&limit=100"):
+              tr(B + "uefa.europa/scoreboard" + q, ne)
+          tr(B + "uefa.europa.conf/scoreboard?dates=20261106", ne)
+          tr("https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.europa/calendar", lambda d: str(d)[:500])
+          tr("https://www.thesportsdb.com/api/v1/json/3/eventsseason.php?id=4481&s=2026-2027", lambda d: (len(d.get("events") or []), str((d.get("events") or [])[-1:])[:500]))
+          tr("https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=4481", lambda d: str(d)[:400])
+          tr("https://match.uefa.com/v5/matches?competitionId=14&seasonYear=2027&limit=5&offset=0&order=ASC&fromDate=2026-11-04&toDate=2026-11-10", lambda d: (len(d), str(d[:1])[:900]))
+          tr("https://match.uefa.com/v5/matches?competitionId=2019&seasonYear=2027&limit=5&offset=0&order=ASC&fromDate=2026-11-04&toDate=2026-11-10", lambda d: (len(d), str(d[:1])[:300]))
+          for lg in ("uefa.europa",):
+              d = g(B + lg + "/scoreboard?dates=20261105")
               ev = d.get("events", [])
               print(lg, len(ev), "events")
               for e in ev[:1] + ev[-3:]:
