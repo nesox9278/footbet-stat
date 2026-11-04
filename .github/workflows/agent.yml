@@ -2,8 +2,8 @@ name: Agent FOOTBET Stats
 
 on:
   schedule:
-    - cron: "7,22,37,52 * * * *"
-  workflow_dispatch: {}
+    - cron: "7,22,37,52 * * * *"   # toutes les 15 minutes (heure UTC), décalé des heures pleines
+  workflow_dispatch: {}             # bouton « Run workflow » pour lancer à la main
 
 permissions:
   contents: write
@@ -24,6 +24,8 @@ jobs:
       - name: Lancer l'agent
         env:
           FOOTBALL_DATA_TOKEN: ${{ secrets.FOOTBALL_DATA_TOKEN }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          ODDS_EVERY_HOURS: "24"
         run: python agent/agent.py
       - name: Publier les statistiques
         run: |
