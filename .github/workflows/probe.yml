@@ -13,50 +13,18 @@ jobs:
           def g(u):
               r = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "footbet-agent/1.0"}), timeout=20)
               return json.loads(r.read())
-          B = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
-          def tr(u, f=lambda d: str(d)[:600]):
+          def tr(u, f=lambda d: json.dumps(d)[:1500]):
               try:
-                  print("OK", u.split("?")[0][-60:], u.split("?")[-1][:80], f(g(u)))
+                  print("OK", u, "\n   ", f(g(u)))
               except Exception as ex:
                   print("FAIL", u, ex)
-          ne = lambda d: (len(d.get("events", [])), [(e["date"], e["name"]) for e in d.get("events", [])[:3]])
-          for q in ("", "?dates=20261105", "?dates=20261105-20261106", "?dates=20261022", "?dates=202611", "?dates=20261105&limit=100"):
-              tr(B + "uefa.europa/scoreboard" + q, ne)
-          tr(B + "uefa.europa.conf/scoreboard?dates=20261106", ne)
-          tr("https://site.api.espn.com/apis/site/v2/sports/soccer/uefa.europa/calendar", lambda d: str(d)[:500])
-          tr("https://www.thesportsdb.com/api/v1/json/3/eventsseason.php?id=4481&s=2026-2027", lambda d: (len(d.get("events") or []), str((d.get("events") or [])[-1:])[:500]))
-          tr("https://www.thesportsdb.com/api/v1/json/3/eventsnextleague.php?id=4481", lambda d: str(d)[:400])
-          tr("https://match.uefa.com/v5/matches?competitionId=14&seasonYear=2027&limit=5&offset=0&order=ASC&fromDate=2026-11-04&toDate=2026-11-10", lambda d: (len(d), str(d[:1])[:900]))
-          tr("https://match.uefa.com/v5/matches?competitionId=2019&seasonYear=2027&limit=5&offset=0&order=ASC&fromDate=2026-11-04&toDate=2026-11-10", lambda d: (len(d), str(d[:1])[:300]))
-          for lg in ("uefa.europa",):
-              d = g(B + lg + "/scoreboard?dates=20261105")
-              ev = d.get("events", [])
-              print(lg, len(ev), "events")
-              for e in ev[:1] + ev[-3:]:
-                  c = e["competitions"][0]
-                  print(" ", e["id"], e["date"], e["status"]["type"].get("state"), e["status"]["type"].get("completed"), [(t["homeAway"], t["team"].get("displayName"), t["team"].get("shortDisplayName"), t["team"].get("id"), t.get("score")) for t in c["competitors"]])
-              past = [e for e in ev if e["status"]["type"].get("completed")]
-              fut = [e for e in ev if e["status"]["type"].get("state") == "pre"]
-              tid = None
-              for e in (past[-1:] + fut[:1]):
-                  s = g(B + lg + "/summary?event=" + e["id"])
-                  print("  SUMMARY", e["id"], sorted(s.keys()))
-                  for k in ("injuries", "rosters"):
-                      v = s.get(k)
-                      print("   ", k, json.dumps(v)[:1500] if v else v)
-                  tid = e["competitions"][0]["competitors"][0]["team"]["id"]
-              try:
-                  r = g(B + lg + "/teams/" + tid + "/roster")
-                  a = r.get("athletes", [])
-                  print("  ROSTER keys", sorted(r.keys()), len(a))
-                  inj = [x for x in a if x.get("injuries")]
-                  print("  roster injured", len(inj), json.dumps(inj[:2])[:1200])
-                  print("  athlete keys", sorted(a[0].keys()) if a else None)
-              except Exception as ex:
-                  print("  roster err", ex)
-          d = g(B + "eng.1/scoreboard?dates=20261107-20261109")
-          for e in d.get("events", [])[:1]:
-              s = g(B + "eng.1/summary?event=" + e["id"])
-              print("PL SUMMARY", sorted(s.keys()), json.dumps(s.get("injuries"))[:1500])
+          ms = g("https://match.uefa.com/v5/matches?competitionId=14&seasonYear=2027&limit=3&offset=0&order=DESC&toDate=2026-11-03")
+          fut = g("https://match.uefa.com/v5/matches?competitionId=14&seasonYear=2027&limit=3&offset=0&order=ASC&fromDate=2026-11-05&toDate=2026-11-06")
+          for m in ms[:1] + fut[:1]:
+              print("MATCH", m["id"], m.get("kickOffTime"), m.get("status"), sorted(m.keys()))
+              tr(f"https://match.uefa.com/v5/matches/{m['id']}/lineups", lambda d: (sorted(d.keys()) if isinstance(d, dict) else type(d), d.get("lineupStatus") if isinstance(d, dict) else None, json.dumps(d)[:1800]))
+          tr("https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/teams/359/roster", lambda d: [(a["displayName"], a.get("injuries"), a.get("status")) for a in d.get("athletes", []) if a.get("injuries")][:5] or json.dumps(d.get("athletes", [{}])[0].get("status")))
+          tr("https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/teams/359/injuries")
+          tr("https://sports.core.api.espn.com/v2/sports/soccer/leagues/eng.1/teams/359/injuries")
           PY
           python3 p.py
