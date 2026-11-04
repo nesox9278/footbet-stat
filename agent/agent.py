@@ -19,6 +19,11 @@ os.makedirs(DATA, exist_ok=True)
 os.makedirs(CACHE, exist_ok=True)
 
 TOKEN = os.environ.get("FOOTBALL_DATA_TOKEN", "").strip()
+ODDS_KEY = os.environ.get("ODDS_API_KEY", "").strip()
+try:
+    ODDS_EVERY_H = float(os.environ.get("ODDS_EVERY_HOURS", "") or 24)
+except ValueError:
+    ODDS_EVERY_H = 24.0
 OFFLINE = os.environ.get("AGENT_OFFLINE", "").strip()  # dossier de données de test
 API = "https://api.football-data.org/v4"
 COMPS = {
@@ -286,6 +291,179 @@ def pick_of(p, h, a):
         return {"sel": "1N", "label": f"{h} ou match nul", "prob": round(p[0] + p[1], 3)}
     return {"sel": "N2", "label": f"Match nul ou {a}", "prob": round(p[1] + p[2], 3)}
 
+# ---------------------------------------------------------------- cotes Betclic (The Odds API, offre gratuite)
+SPORTS = {"FL1": "soccer_france_ligue_one", "PL": "soccer_epl", "PD": "soccer_spain_la_liga", "SA": "soccer_italy_serie_a",
+          "BL1": "soccer_germany_bundesliga", "PPL": "soccer_portugal_primeira_liga", "DED": "soccer_netherlands_eredivisie",
+          "CL": "soccer_uefa_champs_league"}
+
+def parse_event(e):
+    bk = next((b for b in e.get("bookmakers", []) if b.get("key") == "betclic_fr"), None)
+    if not bk:
+        return None
+    r, ou = None, {}
+    for mk in bk.get("markets", []):
+        oc = mk.get("outcomes", [])
+        if mk.get("key") == "h2h":
+            d = {o.get("name"): o.get("price") for o in oc}
+            if all(isinstance(d.get(k), (int, float)) for k in (e["home_team"], "Draw", e["away_team"])):
+                r = [d[e["home_team"]], d["Draw"], d[e["away_team"]]]
+        elif mk.get("key") == "totals":
+            for o in oc:
+                pt = o.get("point")
+                if pt in (1.5, 2.5, 3.5) and isinstance(o.get("price"), (int, float)):
+                    ou.setdefault(str(pt), [None, None])[0 if o.get("name") == "Over" else 1] = o["price"]
+    ou = {k: v for k, v in ou.items() if all(v)}
+    if not r and not ou:
+        return None
+    return {"h": e["home_team"], "a": e["away_team"], "utc": e["commence_time"], "r": r, "ou": ou}
+
+def fetch_odds():
+    path = os.path.join(CACHE, "odds.json")
+    cache = load_json(path, {"at": None, "remaining": None, "events": {}})
+    now_iso = NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    for code in list(cache["events"]):  # on garde seulement les matchs à venir
+        cache["events"][code] = [e for e in cache["events"][code] if e["utc"] > now_iso]
+    if OFFLINE:
+        for code in SPORTS:
+            evs = load_json(os.path.join(OFFLINE, f"odds_{code}.json"), [])
+            cache["events"][code] = [x for x in (parse_event(e) for e in evs) if x]
+        cache["at"] = now_iso
+        return cache
+    age = (NOW - datetime.fromisoformat(cache["at"].replace("Z", "+00:00"))).total_seconds() / 3600 if cache.get("at") else 1e9
+    from zoneinfo import ZoneInfo
+    paris = NOW.astimezone(ZoneInfo("Europe/Paris"))
+    last_day = datetime.fromisoformat(cache["at"].replace("Z", "+00:00")).astimezone(ZoneInfo("Europe/Paris")).date() if cache.get("at") else None
+    morning = paris.hour >= 9 and last_day != paris.date() and age >= 6  # un relevé chaque matin vers 9 h
+    if not ODDS_KEY or (age < ODDS_EVERY_H and not morning):
+        return cache
+    to = (NOW + timedelta(hours=36)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    got = 0
+    for code, sport in SPORTS.items():
+        if cache.get("remaining") is not None and cache["remaining"] < 4:
+            log("crédits The Odds API presque épuisés : arrêt jusqu'au mois prochain"); break
+        url = (f"https://api.the-odds-api.com/v4/sports/{sport}/odds?apiKey={ODDS_KEY}&bookmakers=betclic_fr"
+               f"&markets=h2h,totals&oddsFormat=decimal&dateFormat=iso&commenceTimeTo={to}")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "footbet-agent/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                evs = json.loads(resp.read().decode("utf-8"))
+                rem = resp.headers.get("x-requests-remaining")
+                if rem is not None:
+                    cache["remaining"] = float(rem)
+            cache["events"][code] = [x for x in (parse_event(e) for e in evs) if x]
+            got += 1
+        except Exception as e:
+            log("cotes indisponibles", code, e)
+    if got:
+        cache["at"] = now_iso
+    save_json(path, cache)
+    log("cotes Betclic :", sum(len(v) for v in cache["events"].values()), "matchs ; crédits restants", cache.get("remaining"))
+    return cache
+
+def match_odds(cache, code, m):
+    ko = datetime.fromisoformat(m["utc"].replace("Z", "+00:00"))
+    best, bs = None, 0.0
+    for e in cache["events"].get(code, []):
+        et = datetime.fromisoformat(e["utc"].replace("Z", "+00:00"))
+        if abs((et - ko).total_seconds()) > 3 * 3600:
+            continue
+        sc = sum(difflib.SequenceMatcher(None, norm(x), norm(y)).ratio() + (0.35 if norm(x) and (norm(x) in norm(y) or norm(y) in norm(x)) else 0)
+                 for x, y in ((m["h"], e["h"]), (m["a"], e["a"])))
+        if sc > bs:
+            best, bs = e, sc
+    return best if bs >= 1.1 else None
+
+def over_probs(lh, la):
+    M = score_matrix(lh, la, 11)
+    tot = sum(map(sum, M))
+    return {str(l): sum(M[i][j] for i in range(11) for j in range(11) if i + j > l) / tot for l in (1.5, 2.5, 3.5)}
+
+# ---------------------------------------------------------------- combinés (cotes Betclic réelles)
+C_MIN, C_MAX, C_LEGS = 10.0, 16.0, 7
+C_PLAN = [("Victoires", 2, "win"), ("Victoire/nul", 1, "res"), ("Buts", 1, "goal"), ("Mixte", 1, "mix")]
+
+def combo_legs(rows):
+    allm = []
+    for r in rows:
+        o = r.get("odds")
+        if not o:
+            continue
+        p, pk = r["p"], r["pick"]["sel"]
+        bad = {"r1", "r2", "dc2"} if pk in ("1", "1N") else {"r0", "r1", "dc0"} if pk in ("2", "N2") else set()
+        base = {"id": r["id"], "c": r["c"], "match": f"{r['h']} – {r['a']}", "utc": r["utc"]}
+        legs = []
+        def add(kind, sel, label, odd, prob, est=False):
+            if sel not in bad and isinstance(odd, (int, float)) and odd > 1.01 and 0 < prob < 1:
+                legs.append(dict(base, kind=kind, sel=sel, label=label, odd=round(odd, 2), prob=round(prob, 3), est=est))
+        if o.get("r"):
+            for i, lab in enumerate([f"Victoire de {r['h']}", "Match nul", f"Victoire de {r['a']}"]):
+                add("res", f"r{i}", lab, o["r"][i], p[i])
+            for i, (lab, a, b) in enumerate([(f"{r['h']} ou match nul", 0, 1), (f"{r['h']} ou {r['a']}", 0, 2), (f"Match nul ou {r['a']}", 1, 2)]):
+                add("res", f"dc{i}", lab, 1 / (1 / o["r"][a] + 1 / o["r"][b]), p[a] + p[b], True)
+        for line, (ov, un) in (o.get("ou") or {}).items():
+            po = r["overs"].get(line)
+            if po is None:
+                continue
+            L = line.replace(".", ",")
+            add("goal", f"ou{line}-0", f"Plus de {L} buts", ov, po)
+            add("goal", f"ou{line}-1", f"Moins de {L} buts", un, 1 - po)
+        if legs:
+            allm.append(legs)
+    return allm
+
+def build_combos(rows, rng):
+    import random as _r
+    matches = combo_legs(rows)
+    prod = lambda t, k: math.prod(l[k] for l in t)
+    def allowed(l, mode):
+        return (mode == "win" and l["sel"] in ("r0", "r2")) or (mode == "res" and l["kind"] == "res") or (mode == "goal" and l["kind"] == "goal") or mode == "mix"
+    def valid(t, mode):
+        return mode != "mix" or len({l["kind"] for l in t}) >= 2
+    def build(mode, pmin):
+        opts = [[l for l in ms if allowed(l, mode) and l["prob"] >= pmin] for ms in matches]
+        opts = [o for o in opts if o]; rng.shuffle(opts); t = []
+        for o in opts:
+            o2 = sorted(o, key=lambda l: -l["prob"])
+            t.append(o2[0] if rng.random() < 0.5 else rng.choice(o2[:3]))
+            if prod(t, "odd") >= C_MIN: break
+        if prod(t, "odd") < C_MIN: return None
+        for i in range(len(t)):
+            t2 = t[:i] + t[i + 1:]
+            if t2 and prod(t2, "odd") >= C_MIN and valid(t2, mode):
+                t = t2; break
+        return t if prod(t, "odd") <= C_MAX and len(t) <= C_LEGS and valid(t, mode) else None
+    sig = lambda t: frozenset((l["id"], l["sel"]) for l in t)
+    chosen, alts = [], {}
+    def ok(t, share, cap):
+        s, use = sig(t), {}
+        for _, g in chosen:
+            if s == sig(g) or len(s & sig(g)) > share: return False
+            for x in sig(g): use[x] = use.get(x, 0) + 1
+        return all(use.get(x, 0) < cap for x in s)
+    for name, n, mode in C_PLAN:
+        pool = {}
+        for lv, pmin in enumerate((0.6, 0.55, 0.5, 0.45, 0.4, 0.35, 0.3)):
+            for _ in range(3000):
+                t = build(mode, pmin)
+                if t and sig(t) not in pool: pool[sig(t)] = (lv, t)
+            if len(pool) >= 10 * n: break
+        ranked = [t for lv, t in sorted(pool.values(), key=lambda x: (x[0], -prod(x[1], "prob")))]
+        got = 0
+        for share, cap in ((0, 1), (1, 2), (1, 3), (2, 3), (3, 4), (99, 99)):
+            for t in ranked:
+                if got >= n: break
+                if ok(t, share, cap): chosen.append((name, t)); got += 1
+            if got >= n: break
+        used = {sig(t) for nm, t in chosen if nm == name}
+        alts[name] = [t for t in ranked if sig(t) not in used][:8]
+    def doc(name, t, k):
+        t = sorted(t, key=lambda l: (l["utc"], l["match"]))
+        return {"id": f"{name}-{k}-" + "-".join(sorted(f"{l['id']}{l['sel']}" for l in t))[:120], "type": name, "odd": round(prod(t, "odd"), 2), "prob": round(prod(t, "prob"), 4),
+                "legs": [{x: l[x] for x in ("id", "c", "match", "utc", "sel", "label", "odd", "prob", "est")} for l in t]}
+    return {"tickets": [doc(n, t, i) for i, (n, t) in enumerate(chosen)],
+            "alts": {n: [doc(n, t, 100 + i) for i, t in enumerate(v)] for n, v in alts.items()},
+            "matches": len(matches)}
+
 # ---------------------------------------------------------------- table et forme
 def table_and_form(matches):
     T, F = {}, {}
@@ -307,6 +485,7 @@ def main():
         log("FOOTBALL_DATA_TOKEN manquant : ajoute-le dans Settings > Secrets and variables > Actions.")
     data, errors = collect()
     clubelo = fetch_clubelo()
+    odds = fetch_odds()
     ce_keys = list(clubelo.keys())
     hist_path = os.path.join(DATA, "history.json")
     history = load_json(hist_path, {})
@@ -370,7 +549,11 @@ def main():
                 "p": [round(x, 3) for x in p], "comp": {c: [round(x, 3) for x in v] for c, v in comp.items()},
                 "xg": [round(lam[0], 2), round(lam[1], 2)], "score": sc, "over25": round(o25, 3), "btts": round(btts, 3),
                 "elo": [round(rh), round(ra)], "pick": pk, "conf": conf, "agree": agree,
+                "overs": {k: round(v, 3) for k, v in over_probs(*lam).items()},
             }
+            ev = match_odds(odds, code, m)
+            if ev:
+                row["odds"] = {"r": ev["r"], "ou": ev["ou"]}
             out.append(row)
             if ko - NOW < timedelta(days=3):
                 history[str(m["id"])] = {"utc": m["utc"], "c": code, "match": f"{m['h']} – {m['a']}", "comp": row["comp"], "final": row["p"], "pick": pk, "res": None}
@@ -380,11 +563,15 @@ def main():
     save_json(hist_path, history)
     out.sort(key=lambda r: r["utc"])
     top = sorted([r for r in out if r["utc"] < (NOW + timedelta(hours=36)).isoformat()], key=lambda r: -r["pick"]["prob"])[:8]
+    import random
+    soon = [r for r in out if r.get("odds") and r["utc"] < (NOW + timedelta(hours=36)).isoformat()]
+    combos = build_combos(soon, random.Random(int(NOW.strftime("%Y%m%d"))))
     stats = {
         "updated": NOW.strftime("%Y-%m-%dT%H:%M:%SZ"), "everyMin": 15, "errors": errors,
         "competitions": {c: v[0] for c, v in COMPS.items()}, "weights": W, "quality": quality,
-        "sources": ["football-data.org (résultats, calendrier)", "ClubElo (probabilités Elo)" if clubelo else "ClubElo indisponible à ce passage"],
-        "matches": out, "top": [r["id"] for r in top],
+        "sources": ["football-data.org (résultats, calendrier)", "ClubElo (probabilités Elo)" if clubelo else "ClubElo indisponible à ce passage", "Cotes Betclic via The Odds API" if odds.get("at") else "Cotes Betclic pas encore relevées"],
+        "matches": out, "top": [r["id"] for r in top], "combos": combos,
+        "odds": {"at": odds.get("at"), "remaining": odds.get("remaining"), "matched": sum(1 for r in out if r.get("odds")), "source": "Betclic (via The Odds API)"},
     }
     save_json(os.path.join(DATA, "stats.json"), stats)
     log("écrit", len(out), "matchs ;", len(history), "dans l'historique")
