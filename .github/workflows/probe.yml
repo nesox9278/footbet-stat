@@ -14,8 +14,13 @@ jobs:
               r = urllib.request.urlopen(urllib.request.Request(u, headers={"User-Agent": "footbet-agent/1.0"}), timeout=20)
               return json.loads(r.read())
           B = "https://site.api.espn.com/apis/site/v2/sports/soccer/"
+          for q in ("", "?dates=20261101-20261115", "?dates=20261001-20261115", "?dates=20260801-20261115&limit=500", "?dates=20260701-20261115&limit=300"):
+              try:
+                  d = g(B + "uefa.europa/scoreboard" + q); print("OK", q, len(d.get("events", [])))
+              except Exception as ex:
+                  print("FAIL", q, ex)
           for lg in ("uefa.europa", "uefa.europa.conf"):
-              d = g(B + lg + "/scoreboard?dates=20260701-20261115&limit=1000")
+              d = g(B + lg + "/scoreboard?dates=20260901-20261115")
               ev = d.get("events", [])
               print(lg, len(ev), "events")
               for e in ev[:1] + ev[-3:]:
