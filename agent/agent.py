@@ -110,7 +110,7 @@ def simplify(m, code):
     return {
         "id": m.get("id"), "c": code, "utc": m.get("utcDate"), "status": m.get("status"),
         "h": h.get("shortName") or h.get("name"), "a": a.get("shortName") or a.get("name"),
-        "hid": h.get("id"), "aid": a.get("id"),
+        "hid": h.get("id"), "aid": a.get("id"), "hn": h.get("name"), "an": a.get("name"),
         "hg": side(m.get("score"), "home"), "ag": side(m.get("score"), "away"),
         "stage": m.get("stage"), "md": m.get("matchday"),
     }
@@ -197,9 +197,11 @@ def unify_names(data):
     for code, d in data.items():
         if code not in ESPN_COMPS:
             for m in d["cur"] + d["prev"]:
-                for t in (m["h"], m["a"]):
+                for t, full in ((m["h"], m.get("hn")), (m["a"], m.get("an"))):
                     if t:
                         known[norm(t)] = t
+                        if full:
+                            known.setdefault(norm(full), t)
     keys = list(known)
     cache = {}
     def find(names):
