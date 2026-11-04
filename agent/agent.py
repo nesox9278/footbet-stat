@@ -203,25 +203,30 @@ def unify_names(data):
                         if full:
                             known.setdefault(norm(full), t)
     keys = list(known)
+    words = {k: set(re.findall(r"[a-z0-9]+", unicodedata.normalize("NFD", t.lower()).encode("ascii", "ignore").decode())) for k, t in known.items()}
     cache = {}
-    def find(names):
-        for n in names:
-            k = norm(n)
-            if not k:
-                continue
-            if k in known:
-                return known[k]
-            c = difflib.get_close_matches(k, keys, n=1, cutoff=0.86)
-            if c:
-                return known[c[0]]
+    def find(name):
+        """Prudent : en cas de doute, pas de rapprochement (l'équipe passe alors par ClubElo ou les cotes Betclic)."""
+        k = norm(name)
+        if not k:
+            return None
+        if k in known:
+            return known[k]
+        c = difflib.get_close_matches(k, keys, n=2, cutoff=0.9)
+        if len(c) == 1:
+            return known[c[0]]
+        if len(k) >= 4 and re.fullmatch(r"[a-z0-9]+", k):  # « Lyon » -> « Olympique Lyon »
+            c = {known[x] for x, w in words.items() if k in w}
+            if len(c) == 1:
+                return c.pop()
         return None
     for code in ESPN_COMPS:
         for m in (data.get(code) or {}).get("cur", []):
-            al = m.pop("alias", [[], []])
-            for side_, i in (("h", 0), ("a", 1)):
+            m.pop("alias", None)
+            for side_ in ("h", "a"):
                 key = m[side_]
                 if key not in cache:
-                    cache[key] = find([key] + [x for x in al[i] if x])
+                    cache[key] = find(key)
                 if cache[key]:
                     m[side_] = cache[key]
 
